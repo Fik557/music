@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Muzyczne Lobby</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="login-view" id="loginView">
+        <div class="brand-panel">
+          <div class="brand-copy">
+            <p class="eyebrow">gra muzyczna na żywo</p>
+            <h1>Muzyczne Lobby</h1>
+            <p>Nick, drużyna, przycisk. Moderator prowadzi rundę i punkty.</p>
+          </div>
+        </div>
+
+        <form class="login-form" id="loginForm">
+          <label>
+            Nick
+            <input id="nicknameInput" name="nickname" autocomplete="nickname" maxlength="40" placeholder="np. Ola" required />
+          </label>
+          <label>
+            Drużyna
+            <select id="teamInput" name="team">
+              <option>Drużyna A</option>
+              <option>Drużyna B</option>
+            </select>
+          </label>
+          <label>
+            Kod pokoju
+            <input id="roomInput" name="room" maxlength="18" placeholder="LOBBY" />
+          </label>
+          <div class="login-actions">
+            <button class="primary" type="submit" data-role="player">Wejdź jako gracz</button>
+            <button class="ghost" type="button" id="moderatorJoinButton">Panel moderatora</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="app-view hidden" id="appView">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="roleLabel">gracz</p>
+            <h1>Muzyczne Lobby</h1>
+          </div>
+          <div class="room-tools">
+            <span class="pill" id="connectionStatus">łączenie</span>
+            <span class="pill">Pokój <strong id="roomCodeLabel">LOBBY</strong></span>
+            <button class="icon-button" id="copyLinkButton" type="button" title="Kopiuj link">⧉</button>
+            <button class="icon-button" id="leaveButton" type="button" title="Wyjdź">×</button>
+          </div>
+        </header>
+
+        <div class="grid">
+          <section class="play-surface">
+            <div class="track-head">
+              <div>
+                <p class="eyebrow">teraz gra</p>
+                <h2 id="trackTitle">Brak piosenki</h2>
+                <p id="trackArtist" class="muted">Moderator dodaje utwory w panelu.</p>
+              </div>
+              <span class="phase-pill" id="phaseLabel">gotowe</span>
+            </div>
+
+            <div class="progress-wrap" aria-label="Postęp fragmentu">
+              <div class="progress-meter">
+                <div class="progress-good"></div>
+                <div class="progress-ok"></div>
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+              <div class="time-row">
+                <span id="timeLabel">0.0 s</span>
+                <span id="scoreWindowLabel">2 pkt: 0-5 s</span>
+              </div>
+            </div>
+
+            <div class="buzzer-zone">
+              <button class="sound-button" id="soundButton" type="button">Włącz dźwięk</button>
+              <button class="buzzer" id="buzzButton" type="button">ZGADZAM</button>
+              <p class="buzz-caption" id="buzzCaption">Czeka na start rundy.</p>
+            </div>
+          </section>
+
+          <aside class="side-panel">
+            <section>
+              <div class="panel-title">
+                <h2>Wynik</h2>
+                <span id="peopleCount">0 osób</span>
+              </div>
+              <div class="scoreboard" id="scoreboard"></div>
+            </section>
+
+            <section>
+              <div class="panel-title">
+                <h2>Osoby</h2>
+              </div>
+              <div class="people-list" id="peopleList"></div>
+            </section>
+          </aside>
+        </div>
+
+        <section class="moderator-panel hidden" id="moderatorPanel">
+          <div class="mod-section mod-controls">
+            <div class="panel-title">
+              <h2>Sterowanie</h2>
+              <span id="modHint">moderator</span>
+            </div>
+            <div class="control-row">
+              <button class="primary" id="playButton" type="button">▶ Start</button>
+              <button id="pauseButton" type="button">⏸ Pauza</button>
+              <button id="resumeButton" type="button">▶ Dalej</button>
+              <button id="stopButton" type="button">■ Stop</button>
+              <button id="previousButton" type="button">‹ Poprzednia</button>
+              <button id="nextButton" type="button">Następna ›</button>
+              <button id="resetScoresButton" type="button">Reset punktów</button>
+            </div>
+          </div>
+
+          <div class="mod-section" id="buzzDecision">
+            <div class="panel-title">
+              <h2>Pierwszy przycisk</h2>
+              <span id="buzzedAtLabel">brak</span>
+            </div>
+            <p class="decision-text" id="decisionText">Nikt jeszcze nie zatrzymał piosenki.</p>
+            <div class="control-row">
+              <button class="primary" id="awardSuggestedButton" type="button">Dodaj sugerowane</button>
+              <button id="awardTwoButton" type="button">+2 pkt</button>
+              <button id="awardOneButton" type="button">+1 pkt</button>
+              <button id="clearBuzzButton" type="button">Bez punktu</button>
+              <button id="resumeFromBuzzButton" type="button">Odpauzuj</button>
+            </div>
+          </div>
+
+          <div class="mod-section">
+            <div class="panel-title">
+              <h2>Piosenki</h2>
+              <span id="trackCount">0</span>
+            </div>
+            <form class="track-form" id="trackForm">
+              <input id="trackTitleInput" placeholder="Tytuł" required />
+              <input id="trackArtistInput" placeholder="Wykonawca" />
+              <input id="trackUrlInput" placeholder="Link do MP3 albo /music/plik.mp3" required />
+              <input id="trackStartInput" type="number" min="0" step="0.1" value="0" title="Start od sekundy" />
+              <button class="primary" type="submit">Dodaj</button>
+            </form>
+            <div class="track-list" id="trackList"></div>
+          </div>
+
+          <div class="mod-section">
+            <div class="panel-title">
+              <h2>Progi</h2>
+              <span>10 s fragment</span>
+            </div>
+            <form class="settings-form" id="settingsForm">
+              <label>
+                Fragment
+                <input id="clipDurationInput" type="number" min="3" max="60" step="1" value="10" />
+              </label>
+              <label>
+                2 pkt do
+                <input id="firstWindowInput" type="number" min="1" max="60" step="1" value="5" />
+              </label>
+              <label>
+                1 pkt przez
+                <input id="secondWindowInput" type="number" min="0" max="60" step="1" value="2" />
+              </label>
+              <button type="submit">Zapisz</button>
+            </form>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <audio id="songAudio" preload="auto" crossorigin="anonymous"></audio>
+    <div class="toast hidden" id="toast"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

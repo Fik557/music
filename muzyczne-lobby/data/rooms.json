@@ -1,0 +1,74 @@
+{
+  "LOBBY": {
+    "tracks": [
+      {
+        "id": "track_560d8b3e84fd",
+        "anime": "sao",
+        "opening": "1",
+        "title": "sao",
+        "artist": "1",
+        "difficulty": "medium",
+        "audioUrl": "youtube.com/watch?v=Y4kfe8R1Iqs&list=RDY4kfe8R1Iqs&start_radio=1&pp=ygUGc2FvIG9woAcB",
+        "source": "audio",
+        "videoId": "",
+        "startAtFirst": 0,
+        "startAtSecond": 30,
+        "startAt": 0
+      }
+    ],
+    "currentTrackId": "track_560d8b3e84fd",
+    "settings": {
+      "difficultyScores": {
+        "very_easy": {
+          "first": 2,
+          "second": 1
+        },
+        "easy": {
+          "first": 3,
+          "second": 2
+        },
+        "medium": {
+          "first": 5,
+          "second": 3
+        },
+        "hard": {
+          "first": 7,
+          "second": 5
+        },
+        "impossible": {
+          "first": 10,
+          "second": 7
+        }
+      }
+    }
+  },
+  "A": {
+    "tracks": [],
+    "currentTrackId": null,
+    "blockedIps": {},
+    "settings": {
+      "difficultyScores": {
+        "very_easy": {
+          "first": 2,
+          "second": 1
+        },
+        "easy": {
+          "first": 3,
+          "second": 2
+        },
+        "medium": {
+          "first": 5,
+          "second": 3
+        },
+        "hard": {
+          "first": 7,
+          "second": 5
+        },
+        "impossible": {
+          "first": 10,
+          "second": 7
+        }
+      }
+    }
+  }
+}

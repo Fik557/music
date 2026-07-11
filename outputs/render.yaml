@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: muzyczne-lobby
-    env: node
-    rootDir: muzyczne-lobby
-    plan: free
-    buildCommand: yarn
-    startCommand: node server.js

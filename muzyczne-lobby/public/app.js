@@ -7,6 +7,7 @@ const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
 const AVATAR_OUTPUT_SIZE = 96;
 const AVATAR_OUTPUT_QUALITY = 0.72;
 const MEDIA_LOAD_TIMEOUT_MS = 5000;
+const CLIP_END_PAUSE_EARLY_SECONDS = 0.08;
 const DIFFICULTY_LABELS = {
   very_easy: "Very easy",
   easy: "Easy",
@@ -1999,6 +2000,12 @@ function desiredSourceTime(track, clipElapsed) {
   };
 }
 
+function isPlaybackAtLocalEnd(clipElapsed) {
+  if (!state || state.phase !== "playing") return false;
+  const duration = Number((state.settings && state.settings.clipDuration) || 15);
+  return Number.isFinite(duration) && duration > 0 && clipElapsed >= duration - CLIP_END_PAUSE_EARLY_SECONDS;
+}
+
 function mediaActionKey(track) {
   if (!track) return "";
   return (state && state.currentTrackId) || track.soloKey || track.id || "";
@@ -2073,8 +2080,14 @@ function syncAudio(force) {
   if (!(profile && profile.role === "solo" && state.phase === "loading")) {
     clearMediaLoadTimer();
   }
+  const clipElapsed = estimatedElapsed();
+  if (isPlaybackAtLocalEnd(clipElapsed)) {
+    audio.pause();
+    pauseYouTube();
+    return;
+  }
   if (track.source === "youtube") {
-    syncYouTube(track, force);
+    syncYouTube(track, force, clipElapsed);
     return;
   }
 
@@ -2087,7 +2100,7 @@ function syncAudio(force) {
     lastMediaSegment = "";
   }
 
-  const timing = desiredSourceTime(track, estimatedElapsed());
+  const timing = desiredSourceTime(track, clipElapsed);
   const desiredTime = timing.seconds;
   const mediaKey = track.id + "|" + track.audioUrl;
   const drift = Math.abs((audio.currentTime || 0) - desiredTime);
@@ -2236,9 +2249,9 @@ function ensureYouTubePlayer(track, desiredTime) {
   return true;
 }
 
-function syncYouTube(track, force) {
+function syncYouTube(track, force, clipElapsed) {
   audio.pause();
-  const timing = desiredSourceTime(track, estimatedElapsed());
+  const timing = desiredSourceTime(track, Number.isFinite(clipElapsed) ? clipElapsed : estimatedElapsed());
   const desiredTime = timing.seconds;
   const mediaKey = track.id + "|" + track.videoId;
   if (!ensureYouTubePlayer(track, desiredTime)) return;

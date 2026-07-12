@@ -21,6 +21,13 @@ const DEFAULT_CLIP_DURATION = 15;
 const MAX_AVATAR_LENGTH = 60000;
 const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
 const MAX_AUDIO_UPLOAD_BODY_BYTES = 36 * 1024 * 1024;
+const YOUTUBE_INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+const YOUTUBE_INNERTUBE_CLIENT = {
+  clientName: "WEB",
+  clientVersion: "2.20240726.00.00",
+  hl: "en",
+  gl: "US"
+};
 
 const DIFFICULTIES = [
   { key: "very_easy", label: "Very easy" },
@@ -948,6 +955,21 @@ function youtubeText(value) {
   return "";
 }
 
+function youtubeContentText(value) {
+  return rawText(value && value.content, 140);
+}
+
+function durationFromAccessibilityLabel(value) {
+  const text = String(value || "").toLowerCase();
+  let match = text.match(/(\d+)\s+hours?,\s*(\d+)\s+minutes?,\s*(\d+)\s+seconds?/);
+  if (match) return Number(match[1]) + ":" + String(Number(match[2])).padStart(2, "0") + ":" + String(Number(match[3])).padStart(2, "0");
+  match = text.match(/(\d+)\s+minutes?,\s*(\d+)\s+seconds?/);
+  if (match) return Number(match[1]) + ":" + String(Number(match[2])).padStart(2, "0");
+  match = text.match(/(\d+)\s+seconds?/);
+  if (match) return "0:" + String(Number(match[1])).padStart(2, "0");
+  return "";
+}
+
 function decodeJsonString(value) {
   try {
     return JSON.parse("\"" + String(value || "").replace(/"/g, "\\\"") + "\"");
@@ -959,17 +981,25 @@ function decodeJsonString(value) {
 function cleanYouTubeTitle(title) {
   return rawText(String(title || "")
     .replace(/\s*\[[^\]]*\]\s*/g, " ")
-    .replace(/\s*\((?:official|creditless|tv size|full|lyrics?|audio|hd|4k)[^)]*\)\s*/gi, " ")
-    .replace(/\b(?:creditless|official|lyrics?|full version|tv size|hd|4k)\b/gi, " "), 140);
+    .replace(/\s*\((?:official|creditless|tv size|full|lyrics?|audio|hd|uhd|4k|60\s*fps|subbed|subtitles|dvd-rip)[^)]*\)\s*/gi, " ")
+    .replace(/\b(?:creditless|official|lyrics?|full version|tv size|hd|uhd|4k|60\s*fps|subbed|subtitles|dvd-rip|opening movie)\b/gi, " "), 140);
 }
 
 function parseOpeningTitle(title) {
   const clean = cleanYouTubeTitle(title);
+  const japaneseQuoted = clean.match(/^TVアニメ[「『]([^」』]+)[」』].*?(?:OP|オープニング)/i);
+  if (japaneseQuoted) {
+    return {
+      anime: rawText(japaneseQuoted[1], 90) || clean || "Anime z YouTube",
+      opening: "Opening 1"
+    };
+  }
+
   const match = clean.match(/^(.*?)\s*(?:-|:)?\s*(?:OP|Opening)\s*([0-9]+|[IVXLC]+)?\b/i);
   if (!match) {
     return {
       anime: clean || "Anime z YouTube",
-      opening: ""
+      opening: "Opening 1"
     };
   }
 
@@ -988,6 +1018,7 @@ function trackFromYouTubeVideo(video, difficulty) {
     description: "",
     difficulty: difficultyExists(difficulty) ? difficulty : "medium",
     audioUrl: "https://www.youtube.com/watch?v=" + video.videoId,
+    sourceTitle: rawText(video.title, 180),
     durationText: rawText(video.durationText, 20),
     durationSeconds: numberInRange(video.durationSeconds, parseDurationText(video.durationText), 0, 86400),
     startAtFirst: 0,
@@ -1123,8 +1154,27 @@ async function fillMissingVideoTitle(video) {
   return video;
 }
 
+function videoFromLockupViewModel(item) {
+  if (!item || typeof item !== "object") return null;
+  if (item.contentType && item.contentType !== "LOCKUP_CONTENT_TYPE_VIDEO") return null;
+
+  const command = item.rendererContext && item.rendererContext.commandContext && item.rendererContext.commandContext.onTap && item.rendererContext.commandContext.onTap.innertubeCommand;
+  const endpoint = command && command.watchEndpoint;
+  const videoId = rawText(item.contentId || (endpoint && endpoint.videoId), 40);
+  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
+
+  const metadata = item.metadata && item.metadata.lockupMetadataViewModel;
+  const durationText = durationFromAccessibilityLabel(item.rendererContext && item.rendererContext.accessibilityContext && item.rendererContext.accessibilityContext.label);
+  return {
+    videoId: videoId,
+    title: youtubeContentText(metadata && metadata.title) || "YouTube opening",
+    durationText: durationText,
+    durationSeconds: parseDurationText(durationText)
+  };
+}
+
 function collectYouTubeVideos(node, videos, seen) {
-  if (!node || typeof node !== "object" || videos.length >= 100) return;
+  if (!node || typeof node !== "object" || videos.length >= 300) return;
 
   const item = node.playlistVideoRenderer || node.videoRenderer || node.compactVideoRenderer;
   if (item) {
@@ -1141,9 +1191,68 @@ function collectYouTubeVideos(node, videos, seen) {
     }
   }
 
+  const lockupVideo = videoFromLockupViewModel(node.lockupViewModel);
+  if (lockupVideo && !seen[lockupVideo.videoId]) {
+    seen[lockupVideo.videoId] = true;
+    videos.push(lockupVideo);
+  }
+
   Object.keys(node).forEach(function (key) {
     collectYouTubeVideos(node[key], videos, seen);
   });
+}
+
+function collectYouTubeContinuationTokens(node, tokens, queued) {
+  if (!node || typeof node !== "object") return;
+  const command = node.continuationCommand;
+  const token = command && rawText(command.token, 4000);
+  if (token && !queued[token]) {
+    queued[token] = true;
+    tokens.push(token);
+  }
+  Object.keys(node).forEach(function (key) {
+    collectYouTubeContinuationTokens(node[key], tokens, queued);
+  });
+}
+
+async function fetchYouTubeBrowse(payload) {
+  const body = Object.assign({
+    context: { client: YOUTUBE_INNERTUBE_CLIENT }
+  }, payload);
+  const response = await fetch("https://www.youtube.com/youtubei/v1/browse?key=" + encodeURIComponent(YOUTUBE_INNERTUBE_API_KEY), {
+    method: "POST",
+    headers: {
+      "accept-language": "en-US,en;q=0.9",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 AnimeOpeningQuiz"
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error("YouTube Innertube error");
+  return response.json();
+}
+
+async function fetchPlaylistVideosFromInnertube(playlistId) {
+  const videos = [];
+  const seen = {};
+  const queued = {};
+  const processed = {};
+  const pending = [];
+
+  const first = await fetchYouTubeBrowse({ browseId: "VL" + playlistId });
+  collectYouTubeVideos(first, videos, seen);
+  collectYouTubeContinuationTokens(first, pending, queued);
+
+  while (pending.length && videos.length < 300) {
+    const token = pending.shift();
+    if (processed[token]) continue;
+    processed[token] = true;
+    const page = await fetchYouTubeBrowse({ continuation: token });
+    collectYouTubeVideos(page, videos, seen);
+    collectYouTubeContinuationTokens(page, pending, queued);
+  }
+
+  return videos;
 }
 
 function extractPlaylistVideosFromHtml(html) {
@@ -1227,34 +1336,52 @@ async function importPlaylistTracks(room, payload) {
   if (!playlistId) return { error: "Wklej poprawny link do playlisty YouTube." };
 
   const difficulty = difficultyExists(payload.difficulty) ? payload.difficulty : "medium";
-  const url = "https://www.youtube.com/playlist?list=" + encodeURIComponent(playlistId) + "&hl=pl";
-  let response;
+  let videos = [];
 
   try {
-    response = await fetch(url, {
-      headers: {
-        "accept-language": "pl,en;q=0.8",
-        "user-agent": "Mozilla/5.0 AnimeOpeningQuiz"
-      }
-    });
+    videos = await fetchPlaylistVideosFromInnertube(playlistId);
   } catch (error) {
-    return { error: "Nie udalo sie pobrac playlisty z YouTube." };
+    videos = [];
   }
 
-  if (!response.ok) return { error: "YouTube nie zwrocil playlisty." };
+  if (!videos.length) {
+    const url = "https://www.youtube.com/playlist?list=" + encodeURIComponent(playlistId) + "&hl=pl";
+    let response;
 
-  const html = await response.text();
-  const videos = extractPlaylistVideosFromHtml(html);
+    try {
+      response = await fetch(url, {
+        headers: {
+          "accept-language": "pl,en;q=0.8",
+          "user-agent": "Mozilla/5.0 AnimeOpeningQuiz"
+        }
+      });
+    } catch (error) {
+      return { error: "Nie udalo sie pobrac playlisty z YouTube." };
+    }
+
+    if (!response.ok) return { error: "YouTube nie zwrocil playlisty." };
+
+    const html = await response.text();
+    videos = extractPlaylistVideosFromHtml(html);
+  }
+
   if (!videos.length) return { error: "Nie znaleziono filmow na tej playliscie." };
 
   let added = 0;
+  const existingVideoIds = {};
+  room.libraryTracks.forEach(function (track) {
+    const videoId = rawText(track.videoId || detectYouTubeVideoId(track.audioUrl), 40);
+    if (videoId) existingVideoIds[videoId] = true;
+  });
+
   for (const video of videos) {
     const preparedVideo = await fillMissingVideoTitle(video);
     const normalized = normalizeTrack(trackFromYouTubeVideo(preparedVideo, difficulty), null);
 
-    if (!normalized.error) {
+    if (!normalized.error && !existingVideoIds[normalized.track.videoId]) {
       normalized.track.id = id("library_");
       room.libraryTracks.push(normalized.track);
+      existingVideoIds[normalized.track.videoId] = true;
       added += 1;
     }
   }

@@ -15,6 +15,7 @@ const sockets = new Map();
 const soloStreaks = new Map();
 const ANSWER_TIME_LIMIT = 15;
 const SOLO_CLIP_DURATION = 15;
+const SOLO_SEGMENT_SPLIT = 7.5;
 const SOLO_MEDIA_LOAD_TIMEOUT = 5;
 const DEFAULT_CLIP_DURATION = 15;
 const MAX_AVATAR_LENGTH = 60000;
@@ -1522,7 +1523,7 @@ function visibleSoloTrack(session) {
     durationText: track.durationText || "",
     durationSeconds: numberInRange(track.durationSeconds, 0, 0, 86400),
     startAtFirst: numericTrackTime(track.startAtFirst, 0),
-    startAtSecond: numericTrackTime(track.startAtSecond, numericTrackTime(track.startAtFirst, 0) + 5),
+    startAtSecond: numericTrackTime(track.startAtSecond, numericTrackTime(track.startAtFirst, 0) + SOLO_SEGMENT_SPLIT),
     startAt: numericTrackTime(track.startAtFirst, 0),
     animeHintSteps: revealed ? [] : animeHintSteps(track.anime),
     animeHintStartAt: Math.max(0, SOLO_CLIP_DURATION - 3),
@@ -1554,7 +1555,7 @@ function publicSoloState(socket) {
       groups: [],
       settings: {
         clipDuration: SOLO_CLIP_DURATION,
-        segmentSplit: 5,
+        segmentSplit: SOLO_SEGMENT_SPLIT,
         difficultyScores: cloneScores(DEFAULT_DIFFICULTY_SCORES)
       },
       difficulties: DIFFICULTIES,

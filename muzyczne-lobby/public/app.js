@@ -782,7 +782,9 @@ soundButton.addEventListener("click", function () {
   soundButton.textContent = "Dzwiek wlaczony";
   unlockBuzzerSound();
   requestYouTubeApi();
-  if (profile && profile.role === "solo" && state && state.phase !== "playing" && state.phase !== "loading" && !(state.solo && state.solo.answered)) {
+  if (profile && profile.role === "solo" && state && state.solo && state.solo.mediaError) {
+    send({ type: "soloAction", action: "next", autoplay: true });
+  } else if (profile && profile.role === "solo" && state && state.phase !== "playing" && state.phase !== "loading" && !(state.solo && state.solo.answered)) {
     send({ type: "soloAction", action: "start" });
   }
   syncAudio(true);
@@ -1103,6 +1105,12 @@ function renderTrackHeader() {
   const animeHint = animeHintForTrack(track);
   trackTitle.textContent = animeHint || track.anime || "Anime ukryte";
   trackTitle.classList.toggle("hinted-title", Boolean(animeHint && !track.revealed));
+  if (profile && profile.role === "solo" && state.solo && state.solo.mediaError) {
+    trackTitle.textContent = "Opening nie zaladowal sie";
+    trackTitle.classList.remove("hinted-title");
+    trackArtist.textContent = "Kliknij Nastepny, zeby wylosowac inny.";
+    return;
+  }
   if (profile && profile.role === "solo" && state.solo && state.solo.answered) {
     trackArtist.textContent = state.solo.guessed ? "Zgadniete." : "Nie zgadniete.";
     return;
@@ -1892,7 +1900,8 @@ function renderBuzzer() {
 
   if (isSoloPractice) {
     const answered = Boolean(state.solo && state.solo.answered);
-    const canAnswer = Boolean(state.currentTrack && !answered && (state.phase === "playing" || state.phase === "ended"));
+    const mediaError = Boolean(state.solo && state.solo.mediaError);
+    const canAnswer = Boolean(state.currentTrack && !answered && !mediaError && (state.phase === "playing" || state.phase === "ended"));
     if (soloGuessedButton) soloGuessedButton.classList.add("hidden");
     if (soloAnswerInput && lastSoloAnswerTrackId !== state.currentTrackId) {
       lastSoloAnswerTrackId = state.currentTrackId || "";
@@ -1905,12 +1914,14 @@ function renderBuzzer() {
     if (soloAnswerSubmitButton) soloAnswerSubmitButton.disabled = !canAnswer;
     soloGuessedButton.disabled = !canAnswer;
     soloMissedButton.disabled = !canAnswer;
-    soloNextButton.disabled = !state.currentTrack || (!answered && (state.phase === "playing" || state.phase === "ended"));
+    soloNextButton.disabled = !state.currentTrack || state.phase === "loading" || (!answered && !mediaError && (state.phase === "playing" || state.phase === "ended"));
 
     if (!state.currentTrack) {
       buzzCaption.textContent = "Brak openingow do losowania.";
     } else if (answered) {
       buzzCaption.textContent = state.solo.guessed ? "Zgadniete! Streak rosnie." : "Nie zgadniete. Streak wyzerowany.";
+    } else if (mediaError) {
+      buzzCaption.textContent = (state.solo.mediaErrorReason || "Opening nie zaladowal sie w 5 sekund.") + " Kliknij Nastepny.";
     } else if (state.phase === "loading") {
       buzzCaption.textContent = "Laduje opening przed startem czasu.";
     } else if (state.phase === "playing") {

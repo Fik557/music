@@ -1564,7 +1564,9 @@ function publicSoloState(socket) {
         answered: Boolean(session && session.answered),
         guessed: session && session.answered ? Boolean(session.guessed) : null,
         answerText: session && session.answered ? rawText(session.answerText, 180) : "",
-        streak: Math.max(0, Number(socket.soloStreak || 0))
+        streak: Math.max(0, Number(socket.soloStreak || 0)),
+        mediaError: Boolean(session && session.mediaError),
+        mediaErrorReason: session && session.mediaError ? rawText(session.mediaErrorReason, 160) : ""
       },
       soloStats: [],
       soloTitleOptions: publicSoloTitleOptions()
@@ -1615,10 +1617,36 @@ function startSoloRound(socket, autoplay) {
     answered: false,
     guessed: null,
     revealed: false,
-    mediaReady: false
+    mediaReady: false,
+    mediaError: false,
+    mediaErrorReason: ""
   };
   soloStatForTrack(track);
   sendSoloState(socket);
+}
+
+function failSoloMedia(socket, reason) {
+  const session = socket.soloSession;
+  if (!session || !session.track || session.answered) return false;
+
+  const cleanReason = rawText(reason, 160) || "Opening nie zaladowal sie.";
+  const key = soloTrackKey(session.track);
+  if (!socket.soloLoadFailures) socket.soloLoadFailures = {};
+  if (key) socket.soloLoadFailures[key] = true;
+  markSoloTrackLoadError(session.track, cleanReason);
+
+  session.phase = "idle";
+  session.startedAt = 0;
+  session.loadingStartedAt = 0;
+  session.offset = 0;
+  session.revealed = false;
+  session.mediaReady = false;
+  session.mediaError = true;
+  session.mediaErrorReason = cleanReason;
+
+  sendSoloState(socket);
+  broadcastModeratorStats();
+  return true;
 }
 
 function recordSoloAnswer(socket, guessed, answerText) {
@@ -1669,6 +1697,7 @@ function handleSoloAction(socket, payload) {
   if (action === "start") {
     if (!socket.soloSession) startSoloRound(socket, false);
     const session = socket.soloSession;
+    if (session && session.mediaError) return startSoloRound(socket, true);
     if (session && !session.answered && session.phase !== "playing" && session.phase !== "loading") {
       session.phase = "loading";
       session.startedAt = 0;
@@ -1676,6 +1705,8 @@ function handleSoloAction(socket, payload) {
       session.offset = 0;
       session.revealed = false;
       session.mediaReady = false;
+      session.mediaError = false;
+      session.mediaErrorReason = "";
     }
     return sendSoloState(socket);
   }
@@ -1691,6 +1722,8 @@ function handleSoloAction(socket, payload) {
       session.offset = 0;
       session.revealed = false;
       session.mediaReady = true;
+      session.mediaError = false;
+      session.mediaErrorReason = "";
       if (socket.soloLoadFailures) delete socket.soloLoadFailures[key];
       clearSoloTrackLoadError(session.track);
     }
@@ -1701,10 +1734,7 @@ function handleSoloAction(socket, payload) {
     const session = socket.soloSession;
     const key = rawText(payload.key, 240);
     if (!session || !session.track || session.answered || key !== soloTrackKey(session.track)) return;
-    if (!socket.soloLoadFailures) socket.soloLoadFailures = {};
-    socket.soloLoadFailures[key] = true;
-    markSoloTrackLoadError(session.track, payload.reason);
-    return startSoloRound(socket, true);
+    return failSoloMedia(socket, payload.reason);
   }
 
   if (action === "answer") {
@@ -2669,11 +2699,7 @@ setInterval(function () {
     if (socket.role === "solo" && session && session.phase === "loading" && !session.answered) {
       const loadingStartedAt = Number(session.loadingStartedAt || 0);
       if (loadingStartedAt > 0 && now() - loadingStartedAt >= SOLO_MEDIA_LOAD_TIMEOUT) {
-        if (!socket.soloLoadFailures) socket.soloLoadFailures = {};
-        const key = soloTrackKey(session.track);
-        if (key) socket.soloLoadFailures[key] = true;
-        markSoloTrackLoadError(session.track, "Opening nie zaladowal sie w 5 sekund.");
-        startSoloRound(socket, true);
+        failSoloMedia(socket, "Opening nie zaladowal sie w 5 sekund.");
         return;
       }
     }

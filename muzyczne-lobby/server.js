@@ -1649,6 +1649,27 @@ function failSoloMedia(socket, reason) {
   return true;
 }
 
+function startSoloPlayback(socket) {
+  const session = socket.soloSession;
+  if (!session || !session.track || session.answered) return false;
+  if (session.phase !== "loading" && session.phase !== "idle") return false;
+
+  session.phase = "playing";
+  session.startedAt = now();
+  session.loadingStartedAt = 0;
+  session.offset = 0;
+  session.revealed = false;
+  session.mediaReady = true;
+  session.mediaError = false;
+  session.mediaErrorReason = "";
+
+  const key = soloTrackKey(session.track);
+  if (socket.soloLoadFailures && key) delete socket.soloLoadFailures[key];
+  clearSoloTrackLoadError(session.track);
+  sendSoloState(socket);
+  return true;
+}
+
 function recordSoloAnswer(socket, guessed, answerText) {
   const session = socket.soloSession;
   if (!session || !session.track || session.answered) return;
@@ -1715,19 +1736,7 @@ function handleSoloAction(socket, payload) {
     const session = socket.soloSession;
     const key = rawText(payload.key, 240);
     if (!session || !session.track || session.answered || key !== soloTrackKey(session.track)) return;
-    if (session.phase === "loading" || session.phase === "idle") {
-      session.phase = "playing";
-      session.startedAt = now();
-      session.loadingStartedAt = 0;
-      session.offset = 0;
-      session.revealed = false;
-      session.mediaReady = true;
-      session.mediaError = false;
-      session.mediaErrorReason = "";
-      if (socket.soloLoadFailures) delete socket.soloLoadFailures[key];
-      clearSoloTrackLoadError(session.track);
-    }
-    return sendSoloState(socket);
+    return startSoloPlayback(socket);
   }
 
   if (action === "mediaError") {
@@ -2699,7 +2708,7 @@ setInterval(function () {
     if (socket.role === "solo" && session && session.phase === "loading" && !session.answered) {
       const loadingStartedAt = Number(session.loadingStartedAt || 0);
       if (loadingStartedAt > 0 && now() - loadingStartedAt >= SOLO_MEDIA_LOAD_TIMEOUT) {
-        failSoloMedia(socket, "Opening nie zaladowal sie w 5 sekund.");
+        startSoloPlayback(socket);
         return;
       }
     }

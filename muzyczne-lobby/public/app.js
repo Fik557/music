@@ -2001,13 +2001,13 @@ function desiredSourceTime(track, clipElapsed) {
 
 function mediaActionKey(track) {
   if (!track) return "";
-  return (state && state.mediaToken) || (state && state.currentTrackId) || track.soloKey || track.id || "";
+  return (state && state.currentTrackId) || track.soloKey || track.id || "";
 }
 
 function mediaLoadIdentity(track) {
   if (!track) return "";
   return [
-    mediaActionKey(track),
+    (state && state.mediaToken) || mediaActionKey(track),
     track.source || "audio",
     track.videoId || "",
     track.audioUrl || ""
@@ -2035,7 +2035,7 @@ function startMediaLoadWatch(track) {
   if (mediaReadySentKey === key || mediaErrorSentKey === key) return;
   if (mediaLoadTimer) return;
   mediaLoadTimer = setTimeout(function () {
-    reportMediaError(track, "Opening nie zaladowal sie na czas.");
+    reportMediaReady(track);
   }, MEDIA_LOAD_TIMEOUT_MS);
 }
 
@@ -2049,7 +2049,9 @@ function reportMediaReady(track) {
 }
 
 function reportMediaError(track, reason) {
-  if (!isSoloLoadingTrack(track)) return;
+  if (!profile || profile.role !== "solo" || !state || !state.currentTrack || !track || state.currentTrack.id !== track.id) return;
+  if (state.solo && state.solo.answered) return;
+  if (state.phase !== "loading" && state.phase !== "playing") return;
   const key = mediaLoadIdentity(track);
   if (mediaErrorSentKey === key) return;
   mediaErrorSentKey = key;

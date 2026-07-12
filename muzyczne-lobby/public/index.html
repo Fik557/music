@@ -10,6 +10,7 @@
     <main class="shell">
       <section class="login-view" id="loginView">
         <div class="brand-panel">
+          <button class="player-entry" id="playerToggleButton" type="button" title="Logowanie gracza" aria-label="Logowanie gracza">G</button>
           <button class="admin-entry" id="adminToggleButton" type="button" title="Panel administratora">♛</button>
           <div class="brand-copy">
             <p class="eyebrow">Anime opening quiz by: Nekosia__</p>
@@ -23,11 +24,11 @@
             <h2 id="loginTitle">Dolacz do gry</h2>
           </div>
 
-          <label>
+          <label id="nicknameField">
             Nick
             <input id="nicknameInput" name="nickname" autocomplete="nickname" maxlength="40" required />
           </label>
-          <label>
+          <label id="roomField">
             Kod pokoju
             <input id="roomInput" name="room" maxlength="18" />
           </label>
@@ -63,7 +64,7 @@
             <button class="ghost" id="backToPlayerButton" type="button">Wroc do gracza</button>
           </div>
 
-          <div class="avatar-field">
+          <div class="avatar-field" id="avatarField">
             <span>Zdjecie profilowe</span>
             <div class="avatar-upload">
               <span class="avatar-preview" id="avatarPreview">+</span>
@@ -82,6 +83,10 @@
           </div>
 
           <button class="primary" id="loginSubmitButton" type="submit">Wejdz jako gracz</button>
+          <button class="solo-login-card" id="soloLoginButton" type="button">
+            <span>Granie solo</span>
+            <small>Losowy opening, odpowiedz i procenty piosenek</small>
+          </button>
         </form>
       </section>
 
@@ -99,8 +104,20 @@
           </div>
         </header>
 
-        <div class="grid">
+        <div class="grid" id="mainGrid">
+          <aside class="admin-anime-card hidden" id="adminAnimeCard">
+            <div class="admin-anime-cover" id="adminAnimeCover">
+              <span id="adminAnimeCoverFallback">?</span>
+            </div>
+            <div class="admin-anime-info">
+              <p class="eyebrow">anime</p>
+              <strong id="adminAnimeName">Brak anime</strong>
+              <p id="adminAnimeDescription">Brak opisu.</p>
+            </div>
+          </aside>
+
           <section class="play-surface">
+
             <div class="track-head">
               <div>
                 <p class="eyebrow">teraz gra</p>
@@ -118,7 +135,7 @@
               </div>
               <div class="time-row">
                 <span id="timeLabel">0.0 s</span>
-                <span id="scoreWindowLabel">0-5 s / 5-10 s</span>
+                <span id="scoreWindowLabel">0-5 s / 5-15 s</span>
               </div>
             </div>
 
@@ -126,6 +143,18 @@
               <button class="sound-button" id="soundButton" type="button">Wlacz dzwiek</button>
               <button class="buzzer" id="buzzButton" type="button">Zgaduje!</button>
               <p class="buzz-caption" id="buzzCaption">Czeka na start rundy.</p>
+              <div class="solo-controls hidden" id="soloControls">
+                <form class="solo-answer-form" id="soloAnswerForm">
+                  <input id="soloAnswerInput" list="soloAnswerOptions" placeholder="Wpisz anime" aria-label="Odpowiedz anime" autocomplete="off" />
+                  <button class="primary" id="soloAnswerSubmitButton" type="submit">Zaznacz</button>
+                </form>
+                <datalist id="soloAnswerOptions"></datalist>
+                <div class="solo-action-row">
+                  <button class="primary hidden" id="soloGuessedButton" type="button">Zgadlem</button>
+                  <button id="soloMissedButton" type="button">Nie zgadlem</button>
+                  <button id="soloNextButton" type="button">Nastepny</button>
+                </div>
+              </div>
               <div class="answer-countdown hidden" id="answerCountdown" aria-live="polite">
                 <div class="answer-countdown-head">
                   <span id="answerCountdownLabel">Czas odpowiedzi</span>
@@ -149,7 +178,7 @@
 
             <section>
               <div class="panel-title">
-                <h2>Osoby</h2>
+                <h2 id="peopleTitle">Osoby</h2>
               </div>
               <div class="people-list" id="peopleList"></div>
             </section>
@@ -157,6 +186,17 @@
         </div>
 
         <section class="moderator-panel hidden" id="moderatorPanel">
+          <nav class="admin-panel-tabs" id="adminPanelTabs" aria-label="Panel administratora">
+            <button class="admin-panel-card" type="button" data-admin-panel-target="rooms">Gry</button>
+            <button class="admin-panel-card active" type="button" data-admin-panel-target="tracks">Openingi</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="playlist">Import playlisty</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="search">Wyszukiwarka YouTube</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="library">Biblioteka openingow</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="blocked">Zablokowane osoby</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="scoring">Punktacja poziomow</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="stats">% zgadniec</button>
+          </nav>
+
           <div class="mod-section mod-controls">
             <div class="panel-title">
               <h2>Sterowanie</h2>
@@ -189,7 +229,15 @@
             </div>
           </div>
 
-          <div class="mod-section">
+          <div class="mod-section rooms-section" data-admin-panel="rooms">
+            <div class="panel-title">
+              <h2>Gry</h2>
+              <span id="adminRoomsCount">0 pokoi</span>
+            </div>
+            <div class="admin-room-list" id="adminRoomList"></div>
+          </div>
+
+          <div class="mod-section tracks-section" data-admin-panel="tracks">
             <div class="panel-title">
               <h2>Openingi</h2>
               <span id="trackCount">0</span>
@@ -206,14 +254,22 @@
               </select>
               <input id="trackUrlInput" placeholder="Link" aria-label="Link audio albo YouTube" required />
               <input id="trackStartFirstInput" type="number" min="0" step="0.1" value="0" title="Start fragmentu 0-5 s" aria-label="Start 0-5 s" />
-              <input id="trackStartSecondInput" type="number" min="0" step="0.1" value="5" title="Start fragmentu 5-10 s" aria-label="Start 5-10 s" />
+              <input id="trackStartSecondInput" type="number" min="0" step="0.1" value="5" title="Start fragmentu 5-15 s" aria-label="Start 5-15 s" />
+              <select class="track-local-audio-select" id="localAudioSelect" title="Lokalne audio">
+                <option value="">Lokalne audio</option>
+              </select>
+              <input class="audio-upload-input" id="audioUploadInput" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/mp4,.mp3,.wav,.ogg,.m4a" aria-label="Wgraj lokalny plik audio" />
+              <button class="ghost audio-upload-button" id="audioUploadButton" type="button">Wgraj</button>
+              <span class="audio-upload-status muted" id="audioUploadStatus"></span>
+              <input class="track-cover-input" id="trackCoverInput" placeholder="Link okladki" aria-label="Link okladki anime" />
+              <textarea class="track-description-input" id="trackDescriptionInput" placeholder="Krotki opis anime" aria-label="Krotki opis anime" rows="2"></textarea>
               <button class="primary" id="trackSubmitButton" type="submit">Dodaj</button>
               <button class="ghost hidden" id="cancelEditButton" type="button">Anuluj</button>
             </form>
             <div class="track-list" id="trackList"></div>
           </div>
 
-          <div class="mod-section playlist-section">
+          <div class="mod-section playlist-section" data-admin-panel="playlist">
             <div class="panel-title">
               <h2>Import playlisty YouTube</h2>
               <span>do biblioteki</span>
@@ -232,7 +288,7 @@
             <p class="muted import-status" id="playlistImportStatus"></p>
           </div>
 
-          <div class="mod-section search-section">
+          <div class="mod-section search-section" data-admin-panel="search">
             <div class="panel-title">
               <h2>Wyszukiwarka YouTube</h2>
               <span>eksport do biblioteki</span>
@@ -244,7 +300,7 @@
             <div class="search-result-list" id="youtubeSearchResults"></div>
           </div>
 
-          <div class="mod-section library-section">
+          <div class="mod-section library-section" data-admin-panel="library">
             <div class="panel-title">
               <h2>Biblioteka openingow</h2>
               <span id="libraryCount">0</span>
@@ -252,21 +308,21 @@
             <div class="library-list" id="libraryList"></div>
           </div>
 
-          <div class="mod-section blocked-section">
+          <div class="mod-section blocked-section" data-admin-panel="blocked">
             <div class="panel-title">
-              <h2>Zablokowane IP</h2>
+              <h2>Zablokowane osoby</h2>
               <span>odblokowanie</span>
             </div>
             <div class="blocked-ip-list" id="blockedIpList"></div>
           </div>
 
-          <div class="mod-section">
+          <div class="mod-section scoring-section" data-admin-panel="scoring">
             <div class="panel-title">
               <h2>Punktacja poziomow</h2>
-              <span>0-5 s oraz 5-10 s</span>
+              <span>0-5 s oraz 5-15 s</span>
             </div>
             <form class="difficulty-form" id="settingsForm">
-              <div class="difficulty-head"><span>Poziom</span><span>0-5 s</span><span>5-10 s</span></div>
+              <div class="difficulty-head"><span>Poziom</span><span>0-5 s</span><span>5-15 s</span></div>
               <label class="difficulty-row">
                 <span>Very easy</span>
                 <input id="scoreVeryEasyFirst" type="number" min="0" max="99" step="1" value="2" />
@@ -294,6 +350,18 @@
               </label>
               <button type="submit">Zapisz punktacje</button>
             </form>
+          </div>
+
+          <div class="mod-section admin-stats-section" data-admin-panel="stats">
+            <div class="panel-title">
+              <h2>% zgadniec</h2>
+              <span id="adminSoloStatsCount">0 openingow</span>
+            </div>
+            <div class="stats-toolbar" id="adminStatsSortControls" aria-label="Sortowanie procentow">
+              <button class="active" id="statsSortDescButton" type="button">Najwieksze</button>
+              <button id="statsSortAscButton" type="button">Najmniejsze</button>
+            </div>
+            <div class="admin-solo-stats-list" id="adminSoloStatsList"></div>
           </div>
         </section>
       </section>

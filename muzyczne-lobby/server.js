@@ -6,12 +6,19 @@ const path = require("path");
 const PORT = Number((globalThis.process && process.env && process.env.PORT) || globalThis.MUSIC_LOBBY_PORT || 3000);
 const MODERATOR_PASSWORD = "Kochamkotki";
 const PUBLIC_DIR = path.join(__dirname, "public");
+const MUSIC_DIR = path.join(PUBLIC_DIR, "music");
 const DATA_DIR = path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "rooms.json");
 const persistedRoomConfigs = loadPersistedRooms();
 const rooms = new Map();
 const sockets = new Map();
+const soloStreaks = new Map();
 const ANSWER_TIME_LIMIT = 15;
+const SOLO_CLIP_DURATION = 15;
+const DEFAULT_CLIP_DURATION = 15;
+const MAX_AVATAR_LENGTH = 60000;
+const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
+const MAX_AUDIO_UPLOAD_BODY_BYTES = 36 * 1024 * 1024;
 
 const DIFFICULTIES = [
   { key: "very_easy", label: "Very easy" },
@@ -66,11 +73,94 @@ function rawText(value, max) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, max || 120);
 }
 
+function cleanImageUrl(value, fallback) {
+  const text = rawText(value || fallback, 700);
+  if (!text) return "";
+  try {
+    const url = new URL(text);
+    if (url.protocol === "http:" || url.protocol === "https:") return url.toString().slice(0, 700);
+  } catch (error) {}
+  return "";
+}
+
+function youtubeThumbnailUrl(videoId) {
+  const clean = rawText(videoId, 40);
+  return /^[A-Za-z0-9_-]{11}$/.test(clean) ? "https://i.ytimg.com/vi/" + clean + "/hqdefault.jpg" : "";
+}
+
 function cleanAvatar(value) {
   const text = String(value || "").trim();
-  if (text.length > 180000) return "";
+  if (text.length > MAX_AVATAR_LENGTH) return "";
   if (!/^data:image\/(?:png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i.test(text)) return "";
   return text;
+}
+
+function audioExtensionForUpload(fileName, mimeType) {
+  const extension = path.extname(rawText(fileName, 160)).toLowerCase();
+  if ([".mp3", ".wav", ".ogg", ".m4a"].includes(extension)) return extension;
+  const mime = rawText(mimeType, 80).toLowerCase();
+  if (mime === "audio/mpeg" || mime === "audio/mp3") return ".mp3";
+  if (mime === "audio/wav" || mime === "audio/x-wav") return ".wav";
+  if (mime === "audio/ogg") return ".ogg";
+  if (mime === "audio/mp4" || mime === "audio/x-m4a") return ".m4a";
+  return "";
+}
+
+function cleanAudioFileName(fileName, extension) {
+  const base = path.basename(rawText(fileName, 160), path.extname(rawText(fileName, 160)))
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70) || "opening";
+  return base + "-" + crypto.randomBytes(4).toString("hex") + extension;
+}
+
+function listLocalAudioFiles() {
+  try {
+    fs.mkdirSync(MUSIC_DIR, { recursive: true });
+    return fs.readdirSync(MUSIC_DIR)
+      .filter(function (fileName) {
+        return [".mp3", ".wav", ".ogg", ".m4a"].includes(path.extname(fileName).toLowerCase());
+      })
+      .sort(function (a, b) { return a.localeCompare(b); })
+      .map(function (fileName) {
+        const filePath = path.join(MUSIC_DIR, fileName);
+        const stat = fs.statSync(filePath);
+        return {
+          name: fileName,
+          url: "/music/" + encodeURIComponent(fileName),
+          size: stat.size
+        };
+      });
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveUploadedAudio(payload) {
+  const dataUrl = String(payload.dataUrl || "");
+  const match = dataUrl.match(/^data:([^;,]+)?;base64,([a-z0-9+/=]+)$/i);
+  if (!match) return { error: "Wybierz poprawny plik audio." };
+
+  const extension = audioExtensionForUpload(payload.fileName, payload.mimeType || match[1]);
+  if (!extension) return { error: "Dozwolone sa pliki mp3, wav, ogg albo m4a." };
+
+  const buffer = Buffer.from(match[2], "base64");
+  if (!buffer.length) return { error: "Plik audio jest pusty." };
+  if (buffer.length > MAX_AUDIO_UPLOAD_BYTES) return { error: "Plik audio jest za duzy. Limit to 25 MB." };
+
+  fs.mkdirSync(MUSIC_DIR, { recursive: true });
+  const fileName = cleanAudioFileName(payload.fileName || "opening" + extension, extension);
+  const filePath = path.join(MUSIC_DIR, fileName);
+  fs.writeFileSync(filePath, buffer);
+  return {
+    file: {
+      name: fileName,
+      url: "/music/" + encodeURIComponent(fileName),
+      size: buffer.length
+    }
+  };
 }
 
 function normalizeIp(value) {
@@ -78,6 +168,10 @@ function normalizeIp(value) {
   if (ip.startsWith("::ffff:")) ip = ip.slice(7);
   if (ip === "::1") ip = "127.0.0.1";
   return ip;
+}
+
+function blockIdForIp(ip) {
+  return crypto.createHash("sha256").update("blocked-ip:" + normalizeIp(ip)).digest("hex").slice(0, 18);
 }
 
 function clientIp(req, raw) {
@@ -151,10 +245,14 @@ function restoreTracks(tracks) {
       const result = normalizeTrackResult(track.result);
       const durationSeconds = numberInRange(track.durationSeconds, parseDurationText(track.durationText), 0, 86400);
       const durationText = rawText(track.durationText, 20) || formatDurationSeconds(durationSeconds);
+      const coverUrl = cleanImageUrl(track.coverUrl || track.cover || track.thumbnailUrl || track.imageUrl, youtubeThumbnailUrl(videoId));
+      const description = rawText(track.description || track.animeDescription || track.summary, 420);
       return {
         id: rawText(track.id, 80) || id("track_"),
         anime: anime,
         opening: opening,
+        coverUrl: coverUrl,
+        description: description,
         englishTitle: englishTitle,
         romajiTitle: romajiTitle,
         title: anime,
@@ -217,6 +315,7 @@ function saveRoomConfig(room) {
     libraryTracks: room.libraryTracks,
     currentTrackId: room.currentTrackId,
     blockedIps: room.blockedIps,
+    updatedAt: room.updatedAt,
     settings: {
       difficultyScores: cloneScores(room.settings.difficultyScores)
     }
@@ -261,7 +360,7 @@ function createRoom(code) {
     playerScores: {},
     blockedIps: normalizeBlockedIps(saved.blockedIps),
     settings: {
-      clipDuration: 10,
+      clipDuration: DEFAULT_CLIP_DURATION,
       segmentSplit: 5,
       difficultyScores: cloneScores(sourceSettings && sourceSettings.difficultyScores)
     },
@@ -281,10 +380,364 @@ function roomClients(room) {
   });
 }
 
+function soloStatsStore() {
+  if (!persistedRoomConfigs.__soloStats || typeof persistedRoomConfigs.__soloStats !== "object" || Array.isArray(persistedRoomConfigs.__soloStats)) {
+    persistedRoomConfigs.__soloStats = {};
+  }
+  return persistedRoomConfigs.__soloStats;
+}
+
+function soloTrackKey(track) {
+  const videoId = rawText((track && track.videoId) || detectYouTubeVideoId(track && track.audioUrl), 40);
+  if (videoId) return "yt:" + videoId;
+  return "track:" + crypto
+    .createHash("sha1")
+    .update([track && track.audioUrl, track && track.anime, track && track.opening].join("|"))
+    .digest("hex");
+}
+
+function addSoloTrack(pool, seen, track) {
+  const normalized = normalizeTrack(track || {}, null);
+  if (normalized.error) return;
+  const result = normalized.track;
+  result.id = rawText(track.id, 80) || result.id;
+  const key = soloTrackKey(result);
+  if (seen[key]) return;
+  seen[key] = true;
+  result.soloKey = key;
+  pool.push(result);
+}
+
+function allSoloTracks() {
+  const pool = [];
+  const seen = {};
+
+  Object.keys(persistedRoomConfigs).forEach(function (code) {
+    const config = persistedRoomConfigs[code];
+    if (!config || typeof config !== "object" || code === "__soloStats") return;
+    (config.tracks || []).forEach((track) => addSoloTrack(pool, seen, track));
+    (config.libraryTracks || []).forEach((track) => addSoloTrack(pool, seen, track));
+  });
+
+  rooms.forEach(function (room) {
+    (room.tracks || []).forEach((track) => addSoloTrack(pool, seen, track));
+    (room.libraryTracks || []).forEach((track) => addSoloTrack(pool, seen, track));
+  });
+
+  return pool;
+}
+
+function updateSoloStatMeta(track, entry) {
+  entry.anime = rawText(track.anime, 180) || "Anime bez nazwy";
+  entry.opening = rawText(track.opening, 120);
+  entry.coverUrl = rawText(track.coverUrl, 700);
+  entry.audioUrl = rawText(track.audioUrl, 700);
+  entry.videoId = rawText(track.videoId, 40);
+  entry.difficulty = difficultyExists(track.difficulty) ? track.difficulty : "medium";
+}
+
+function soloStatForTrack(track) {
+  const store = soloStatsStore();
+  const key = soloTrackKey(track);
+  if (!store[key]) store[key] = { attempts: 0, guessed: 0 };
+  updateSoloStatMeta(track, store[key]);
+  return store[key];
+}
+
+function markSoloTrackLoadError(track, reason) {
+  const stat = soloStatForTrack(track);
+  if (!stat) return null;
+  stat.mediaError = true;
+  stat.mediaErrorAt = now();
+  stat.mediaErrorReason = rawText(reason, 160) || "Nie zaladowano openingu";
+  savePersistedRooms();
+  broadcastModeratorStats();
+  return stat;
+}
+
+function clearSoloTrackLoadError(track) {
+  const stat = soloStatForTrack(track);
+  if (!stat) return null;
+  if (!stat.mediaError && !stat.mediaErrorReason && !stat.mediaErrorAt) return stat;
+  delete stat.mediaError;
+  delete stat.mediaErrorReason;
+  delete stat.mediaErrorAt;
+  savePersistedRooms();
+  broadcastModeratorStats();
+  return stat;
+}
+
+function publicSoloStats(currentKey) {
+  const store = soloStatsStore();
+  const rowsByKey = {};
+
+  function ensureRow(track, explicitKey) {
+    const key = explicitKey || soloTrackKey(track);
+    const entry = store[key] || {};
+    if (!rowsByKey[key]) {
+      rowsByKey[key] = {
+        key: key,
+        anime: rawText(entry.anime || (track && track.anime), 180) || "Anime bez nazwy",
+        opening: rawText(entry.opening || (track && track.opening), 120),
+        coverUrl: rawText(entry.coverUrl || (track && track.coverUrl), 700),
+        difficulty: difficultyExists(entry.difficulty) ? entry.difficulty : (difficultyExists(track && track.difficulty) ? track.difficulty : "medium"),
+        difficultyLabel: difficultyLabel(difficultyExists(entry.difficulty) ? entry.difficulty : (difficultyExists(track && track.difficulty) ? track.difficulty : "medium")),
+        attempts: 0,
+        guessed: 0,
+        soloAttempts: 0,
+        gameAttempts: 0,
+        soloGameAttempts: 0,
+        mediaError: Boolean(entry.mediaError),
+        mediaErrorReason: rawText(entry.mediaErrorReason, 160),
+        mediaErrorAt: numberInRange(entry.mediaErrorAt, 0, 0, 9999999999),
+        current: key === currentKey
+      };
+    } else if (difficultyExists(track && track.difficulty)) {
+      rowsByKey[key].difficulty = track.difficulty;
+      rowsByKey[key].difficultyLabel = difficultyLabel(track.difficulty);
+    }
+    return rowsByKey[key];
+  }
+
+  allSoloTracks().forEach(function (track) {
+    const key = soloTrackKey(track);
+    const entry = store[key] || {};
+    const row = ensureRow(track);
+    const attempts = Math.max(0, Number(entry.attempts || 0));
+    const guessed = Math.max(0, Number(entry.guessed || 0));
+    row.attempts += attempts;
+    row.guessed += guessed;
+    row.soloAttempts += attempts;
+    if (entry.mediaError) {
+      row.mediaError = true;
+      row.mediaErrorReason = rawText(entry.mediaErrorReason, 160);
+      row.mediaErrorAt = numberInRange(entry.mediaErrorAt, 0, 0, 9999999999);
+    }
+  });
+
+  Object.keys(store).forEach(function (key) {
+    if (rowsByKey[key]) return;
+    const entry = store[key] || {};
+    const row = ensureRow({
+      anime: entry.anime,
+      opening: entry.opening,
+      coverUrl: entry.coverUrl
+    }, key);
+    const attempts = Math.max(0, Number(entry.attempts || 0));
+    const guessed = Math.max(0, Number(entry.guessed || 0));
+    row.attempts += attempts;
+    row.guessed += guessed;
+    row.soloAttempts += attempts;
+    if (entry.mediaError) {
+      row.mediaError = true;
+      row.mediaErrorReason = rawText(entry.mediaErrorReason, 160);
+      row.mediaErrorAt = numberInRange(entry.mediaErrorAt, 0, 0, 9999999999);
+    }
+  });
+
+  collectRoomTrackResults().forEach(function (result) {
+    const track = result.track;
+    const row = ensureRow(track);
+    row.attempts += 1;
+    if (result.soloGame) {
+      row.soloAttempts += 1;
+      row.soloGameAttempts += 1;
+    } else {
+      row.gameAttempts += 1;
+    }
+    if (track.result && track.result.status === "guessed") row.guessed += 1;
+  });
+
+  const rows = Object.keys(rowsByKey).map(function (key) {
+    const row = rowsByKey[key];
+    row.percent = row.attempts ? Math.round((row.guessed / row.attempts) * 100) : 0;
+    return row;
+  });
+
+  return rows.sort(function (a, b) {
+    if (a.current !== b.current) return a.current ? -1 : 1;
+    if (a.attempts !== b.attempts) return b.attempts - a.attempts;
+    if (a.percent !== b.percent) return b.percent - a.percent;
+    return a.anime.localeCompare(b.anime);
+  });
+}
+
+function roomStatsSources() {
+  const sources = [];
+  const seen = {};
+
+  rooms.forEach(function (room, code) {
+    seen[code] = true;
+    sources.push({
+      code: code,
+      active: true,
+      room: room,
+      config: null
+    });
+  });
+
+  Object.keys(persistedRoomConfigs).forEach(function (code) {
+    if (code === "__soloStats" || seen[code]) return;
+    const config = persistedRoomConfigs[code];
+    if (!config || typeof config !== "object") return;
+    sources.push({
+      code: code,
+      active: false,
+      room: null,
+      config: config
+    });
+  });
+
+  if (!sources.length) {
+    sources.push({
+      code: "LOBBY",
+      active: false,
+      room: null,
+      config: { tracks: [], libraryTracks: [], currentTrackId: null, updatedAt: 0 }
+    });
+  }
+
+  return sources.sort(function (a, b) {
+    if (a.code === "LOBBY") return -1;
+    if (b.code === "LOBBY") return 1;
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return a.code.localeCompare(b.code);
+  });
+}
+
+function sourceTracks(source) {
+  if (source.room) return source.room.tracks || [];
+  return restoreTracks(source.config && source.config.tracks);
+}
+
+function sourceLibraryTracks(source) {
+  if (source.room) return source.room.libraryTracks || [];
+  return restoreTracks(source.config && source.config.libraryTracks);
+}
+
+function collectRoomTrackResults() {
+  const resultTracks = [];
+  roomStatsSources().forEach(function (source) {
+    sourceTracks(source).forEach(function (track) {
+      if (track && track.result && (track.result.status === "guessed" || track.result.status === "missed")) {
+        resultTracks.push({
+          track: track,
+          sourceCode: source.code,
+          soloGame: source.code === "SOLO"
+        });
+      }
+    });
+  });
+  return resultTracks;
+}
+
+function publicAdminRooms(currentCode) {
+  return roomStatsSources().map(function (source) {
+    const tracks = sourceTracks(source);
+    const libraryTracks = sourceLibraryTracks(source);
+    const activeClients = source.room ? roomClients(source.room).filter(function (client) {
+      return client.joined;
+    }) : [];
+    const activePlayers = activeClients.filter(function (client) {
+      return client.role === "player";
+    });
+    const currentTrackId = source.room ? source.room.currentTrackId : rawText(source.config && source.config.currentTrackId, 80);
+    const selectedTrack = tracks.find(function (track) {
+      return track.id === currentTrackId;
+    }) || tracks[0] || null;
+
+    return {
+      code: source.code,
+      active: source.active,
+      current: source.code === currentCode,
+      people: activeClients.length,
+      players: activePlayers.length,
+      groups: source.room ? Object.keys(source.room.groups || {}).length : 0,
+      tracks: tracks.length,
+      libraryTracks: libraryTracks.length,
+      results: tracks.filter(function (track) { return track.result; }).length,
+      currentAnime: selectedTrack ? rawText(selectedTrack.anime, 180) : "",
+      updatedAt: source.room ? source.room.updatedAt : numberInRange(source.config && source.config.updatedAt, 0, 0, 9999999999)
+    };
+  });
+}
+
+function fallbackRoomCodeAfterRemoval(targetCode) {
+  const codes = [];
+  rooms.forEach(function (_room, code) {
+    if (code !== targetCode) codes.push(code);
+  });
+  Object.keys(persistedRoomConfigs).forEach(function (code) {
+    if (code === "__soloStats" || code === targetCode || codes.includes(code)) return;
+    const config = persistedRoomConfigs[code];
+    if (!config || typeof config !== "object") return;
+    codes.push(code);
+  });
+  codes.sort(function (a, b) {
+    if (a === "LOBBY") return -1;
+    if (b === "LOBBY") return 1;
+    if (a === "SOLO" && b !== "SOLO") return 1;
+    if (b === "SOLO" && a !== "SOLO") return -1;
+    return a.localeCompare(b);
+  });
+  return codes[0] || targetCode;
+}
+
+function normalizeAnswer(value) {
+  return rawText(value, 180)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function soloTrackTitles(track) {
+  const titles = [
+    track && track.anime,
+    track && track.title,
+    track && track.englishTitle,
+    track && track.romajiTitle
+  ].map(function (value) {
+    return rawText(value, 180);
+  }).filter(Boolean);
+
+  return Array.from(new Set(titles));
+}
+
+function publicSoloTitleOptions() {
+  const seen = {};
+  const options = [];
+  allSoloTracks().forEach(function (track) {
+    soloTrackTitles(track).forEach(function (title) {
+      const key = normalizeAnswer(title);
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      options.push(title);
+    });
+  });
+  return options.sort(function (a, b) {
+    return a.localeCompare(b);
+  });
+}
+
+function soloAnswerMatches(track, answerText) {
+  const answer = normalizeAnswer(answerText);
+  if (!answer) return false;
+  return soloTrackTitles(track).some(function (title) {
+    return normalizeAnswer(title) === answer;
+  });
+}
+
 function currentTrack(room) {
   return room.tracks.find(function (track) {
     return track.id === room.currentTrackId;
   }) || null;
+}
+
+function isRoundClosed(room) {
+  const track = currentTrack(room);
+  return Boolean(room.revealed || room.phase === "ended" || (track && track.result));
 }
 
 function elapsed(room) {
@@ -298,6 +751,26 @@ function difficultyExists(key) {
   return DIFFICULTIES.some(function (difficulty) {
     return difficulty.key === key;
   });
+}
+
+function isHintCharacter(char) {
+  return /[\p{L}\p{N}]/u.test(char);
+}
+
+function maskAnimeTitle(title, visibleLetters) {
+  let left = numberInRange(visibleLetters, 0, 0, 99);
+  return Array.from(rawText(title, 180) || "Anime").map(function (char) {
+    if (!isHintCharacter(char)) return char;
+    if (left > 0) {
+      left -= 1;
+      return char;
+    }
+    return "_";
+  }).join("");
+}
+
+function animeHintSteps(title) {
+  return [maskAnimeTitle(rawText(title, 180) || "Anime", 1)];
 }
 
 function difficultyLabel(key) {
@@ -320,7 +793,7 @@ function scoringLabel(room, points, seconds) {
   const track = currentTrack(room);
   const difficulty = track ? difficultyLabel(track.difficulty) : "Medium";
   if (seconds <= room.settings.segmentSplit) return difficulty + " · 0-5 s";
-  if (seconds <= room.settings.clipDuration) return difficulty + " · 5-10 s";
+  if (seconds <= room.settings.clipDuration) return difficulty + " · 5-" + room.settings.clipDuration + " s";
   return difficulty + " · poza czasem";
 }
 
@@ -350,12 +823,14 @@ function publicGroups(room) {
 function publicBlockedIps(room) {
   return Object.keys(room.blockedIps || {})
     .sort(function (a, b) {
-      return a.localeCompare(b);
+      const left = room.blockedIps[a] || {};
+      const right = room.blockedIps[b] || {};
+      return cleanText(left.nickname, "Gracz", 60).localeCompare(cleanText(right.nickname, "Gracz", 60));
     })
     .map(function (ip) {
       const entry = room.blockedIps[ip] || {};
       return {
-        ip: ip,
+        id: blockIdForIp(ip),
         nickname: cleanText(entry.nickname, "Gracz", 60),
         team: cleanText(entry.team, "Druzyna", 32),
         by: cleanText(entry.by, "Administrator", 60),
@@ -502,6 +977,8 @@ function trackFromYouTubeVideo(video, difficulty) {
   return {
     anime: meta.anime,
     opening: meta.opening,
+    coverUrl: youtubeThumbnailUrl(video.videoId),
+    description: "",
     difficulty: difficultyExists(difficulty) ? difficulty : "medium",
     audioUrl: "https://www.youtube.com/watch?v=" + video.videoId,
     durationText: rawText(video.durationText, 20),
@@ -819,6 +1296,8 @@ function normalizeTrack(payload, existing) {
   const sourceTitle = rawText(payload.sourceTitle || payload.rawTitle || (existing && existing.sourceTitle), 180);
   const anime = rawText(payload.anime || payload.title || [englishTitle, romajiTitle].filter(Boolean).join(" / "), 180) || (source === "youtube" ? "Anime z YouTube" : "Anime bez nazwy");
   const opening = rawText(payload.opening || payload.artist, 120);
+  const coverUrl = cleanImageUrl(payload.coverUrl || payload.cover || payload.thumbnailUrl, existing ? existing.coverUrl : youtubeThumbnailUrl(videoId));
+  const description = rawText(payload.description || payload.animeDescription || payload.summary || (existing && existing.description), 420);
   const durationSeconds = numberInRange(payload.durationSeconds, existing ? existing.durationSeconds : parseDurationText(payload.durationText), 0, 86400);
   const durationText = rawText(payload.durationText, 20) || (existing ? existing.durationText : "") || formatDurationSeconds(durationSeconds);
 
@@ -827,6 +1306,8 @@ function normalizeTrack(payload, existing) {
       id: existing ? existing.id : id("track_"),
       anime: anime,
       opening: opening,
+      coverUrl: coverUrl,
+      description: description,
       englishTitle: englishTitle,
       romajiTitle: romajiTitle,
       title: anime,
@@ -848,15 +1329,20 @@ function normalizeTrack(payload, existing) {
 
 function visibleTrack(track, socket, room) {
   if (!track) return null;
-  const canSeeTitle = socket.role === "moderator" || room.revealed || room.phase === "ended";
+  const canSeeTitle = socket.role === "moderator" || isRoundClosed(room);
+  const canSeeAdminMeta = socket.role === "moderator";
   const anime = canSeeTitle ? track.anime : "Anime ukryte";
   const opening = canSeeTitle ? track.opening : "";
   return {
     id: track.id,
     anime: anime,
     opening: opening,
+    coverUrl: canSeeAdminMeta ? (track.coverUrl || "") : "",
+    description: canSeeAdminMeta ? (track.description || "") : "",
     englishTitle: canSeeTitle ? (track.englishTitle || "") : "",
     romajiTitle: canSeeTitle ? (track.romajiTitle || "") : "",
+    animeHintSteps: canSeeTitle ? [] : animeHintSteps(track.anime),
+    animeHintStartAt: Math.max(0, room.settings.clipDuration - 3),
     title: anime,
     artist: opening,
     difficulty: track.difficulty || "medium",
@@ -904,7 +1390,7 @@ function peopleForRoom(room, isModerator) {
         personalScore: personalScore,
         isMvp: client.role === "player" && personalScore > 0 && personalScore === mvpScore,
         blockedThisRound: client.role === "player" && Boolean(room.lockedGroups[client.team]),
-        ip: isModerator ? normalizeIp(client.ip) : "",
+        ip: "",
         connected: true
       };
     })
@@ -932,6 +1418,7 @@ function publicBuzzer(room) {
 
 function publicRoom(room, socket) {
   const isModerator = socket.role === "moderator";
+  const roundClosed = isRoundClosed(room);
 
   return {
     type: "state",
@@ -941,7 +1428,8 @@ function publicRoom(room, socket) {
       phase: room.phase,
       startedAt: room.startedAt,
       offset: elapsed(room),
-      revealed: room.revealed || room.phase === "ended",
+      revealed: roundClosed,
+      roundClosed: roundClosed,
       lockedGroups: Object.keys(room.lockedGroups).filter(function (groupName) {
         return room.lockedGroups[groupName];
       }),
@@ -955,7 +1443,10 @@ function publicRoom(room, socket) {
       settings: room.settings,
       difficulties: DIFFICULTIES,
       people: peopleForRoom(room, isModerator),
-      blockedIps: isModerator ? publicBlockedIps(room) : []
+      blockedIps: isModerator ? publicBlockedIps(room) : [],
+      localAudioFiles: isModerator ? listLocalAudioFiles() : [],
+      soloStats: isModerator ? publicSoloStats(room.currentTrackId ? soloTrackKey(currentTrack(room) || {}) : "") : [],
+      adminRooms: isModerator ? publicAdminRooms(room.code) : []
     }
   };
 }
@@ -967,6 +1458,14 @@ function touch(room) {
 function broadcast(room) {
   roomClients(room).forEach(function (socket) {
     send(socket, publicRoom(room, socket));
+  });
+}
+
+function broadcastModeratorStats() {
+  sockets.forEach(function (socket) {
+    if (socket.role === "moderator" && socket.roomCode) {
+      send(socket, publicRoom(getRoom(socket.roomCode), socket));
+    }
   });
 }
 
@@ -991,6 +1490,236 @@ function sendError(socket, message) {
 
 function rejectJoin(socket, message) {
   send(socket, { type: "joinRejected", message: message });
+}
+
+function soloElapsed(socket) {
+  const session = socket.soloSession;
+  if (!session) return 0;
+  const limit = SOLO_CLIP_DURATION;
+  if (session.phase === "playing") {
+    return numberInRange(session.offset + now() - session.startedAt, 0, 0, limit);
+  }
+  return numberInRange(session.offset, 0, 0, limit);
+}
+
+function visibleSoloTrack(session) {
+  if (!session || !session.track) return null;
+  const track = session.track;
+  const revealed = Boolean(session.revealed || session.answered);
+  return {
+    id: track.id,
+    anime: revealed ? track.anime : "Anime ukryte",
+    opening: revealed ? track.opening : "",
+    coverUrl: revealed ? (track.coverUrl || "") : "",
+    description: revealed ? (track.description || "") : "",
+    title: revealed ? track.anime : "Anime ukryte",
+    artist: revealed ? track.opening : "",
+    difficulty: "",
+    audioUrl: track.audioUrl,
+    source: track.source || "audio",
+    videoId: track.videoId || "",
+    durationText: track.durationText || "",
+    durationSeconds: numberInRange(track.durationSeconds, 0, 0, 86400),
+    startAtFirst: numericTrackTime(track.startAtFirst, 0),
+    startAtSecond: numericTrackTime(track.startAtSecond, numericTrackTime(track.startAtFirst, 0) + 5),
+    startAt: numericTrackTime(track.startAtFirst, 0),
+    animeHintSteps: revealed ? [] : animeHintSteps(track.anime),
+    animeHintStartAt: Math.max(0, SOLO_CLIP_DURATION - 3),
+    revealed: revealed,
+    result: null
+  };
+}
+
+function publicSoloState(socket) {
+  const session = socket.soloSession;
+  const trackKey = session && session.track ? soloTrackKey(session.track) : "";
+  return {
+    type: "soloState",
+    room: {
+      code: "SOLO",
+      phase: session ? session.phase : "idle",
+      startedAt: session ? session.startedAt : 0,
+      offset: soloElapsed(socket),
+      revealed: Boolean(session && (session.revealed || session.answered)),
+      roundClosed: Boolean(session && session.answered),
+      lockedGroups: [],
+      tracks: [],
+      libraryTracks: [],
+      currentTrackId: trackKey,
+      mediaToken: session ? trackKey + "|" + String(session.loadingStartedAt || session.startedAt || 0) : "",
+      currentTrack: visibleSoloTrack(session),
+      currentBuzzer: null,
+      teams: {},
+      groups: [],
+      settings: {
+        clipDuration: SOLO_CLIP_DURATION,
+        segmentSplit: 5,
+        difficultyScores: cloneScores(DEFAULT_DIFFICULTY_SCORES)
+      },
+      difficulties: DIFFICULTIES,
+      people: [],
+      blockedIps: [],
+      solo: {
+        answered: Boolean(session && session.answered),
+        guessed: session && session.answered ? Boolean(session.guessed) : null,
+        answerText: session && session.answered ? rawText(session.answerText, 180) : "",
+        streak: Math.max(0, Number(socket.soloStreak || 0))
+      },
+      soloStats: [],
+      soloTitleOptions: publicSoloTitleOptions()
+    }
+  };
+}
+
+function sendSoloState(socket) {
+  send(socket, publicSoloState(socket));
+}
+
+function startSoloRound(socket, autoplay) {
+  const tracks = allSoloTracks();
+  if (!tracks.length) {
+    sendError(socket, "Brak openingow do trybu solo.");
+    return;
+  }
+
+  const previousKey = socket.soloSession && socket.soloSession.track ? soloTrackKey(socket.soloSession.track) : "";
+  const skipped = socket.soloLoadFailures || {};
+  const stats = soloStatsStore();
+  let availableTracks = tracks.filter(function (track) {
+    const key = soloTrackKey(track);
+    return !skipped[key] && !(stats[key] && stats[key].mediaError);
+  });
+  if (!availableTracks.length) {
+    availableTracks = tracks.filter(function (track) {
+      return !skipped[soloTrackKey(track)];
+    });
+  }
+  if (!availableTracks.length) availableTracks = tracks;
+
+  let track = availableTracks[Math.floor(Math.random() * availableTracks.length)];
+  if (availableTracks.length > 1) {
+    let guard = 0;
+    while (soloTrackKey(track) === previousKey && guard < 8) {
+      track = availableTracks[Math.floor(Math.random() * availableTracks.length)];
+      guard += 1;
+    }
+  }
+
+  socket.soloSession = {
+    track: track,
+    phase: autoplay ? "loading" : "idle",
+    startedAt: 0,
+    loadingStartedAt: autoplay ? now() : 0,
+    offset: 0,
+    answered: false,
+    guessed: null,
+    revealed: false,
+    mediaReady: false
+  };
+  soloStatForTrack(track);
+  sendSoloState(socket);
+}
+
+function recordSoloAnswer(socket, guessed, answerText) {
+  const session = socket.soloSession;
+  if (!session || !session.track || session.answered) return;
+
+  session.offset = soloElapsed(socket);
+  session.phase = session.phase === "ended" ? "ended" : "paused";
+  session.answered = true;
+  session.guessed = Boolean(guessed);
+  session.answerText = rawText(answerText, 180);
+  session.revealed = true;
+  socket.soloStreak = session.guessed ? Math.max(0, Number(socket.soloStreak || 0)) + 1 : 0;
+  if (socket.clientId) soloStreaks.set(socket.clientId, socket.soloStreak);
+
+  const stat = soloStatForTrack(session.track);
+  stat.attempts = Math.max(0, Number(stat.attempts || 0)) + 1;
+  if (guessed) stat.guessed = Math.max(0, Number(stat.guessed || 0)) + 1;
+  else stat.guessed = Math.max(0, Number(stat.guessed || 0));
+  stat.updatedAt = now();
+  savePersistedRooms();
+  sendSoloState(socket);
+  broadcastModeratorStats();
+}
+
+function handleSoloJoin(socket, payload) {
+  const previous = socket.roomCode ? getRoom(socket.roomCode) : null;
+  socket.role = "solo";
+  socket.clientId = rawText(payload.clientId, 80) || socket.id;
+  socket.nickname = cleanText(payload.nickname, "Solo", 60);
+  socket.avatar = cleanAvatar(payload.avatar);
+  socket.soloStreak = Math.max(0, Number(soloStreaks.get(socket.clientId) || socket.soloStreak || 0));
+  socket.soloLoadFailures = {};
+  socket.team = "Solo";
+  socket.playMode = "solo";
+  socket.joined = true;
+  socket.roomCode = null;
+
+  send(socket, { type: "soloJoined", id: socket.id, roomCode: "SOLO", role: "solo", playMode: "solo" });
+  if (previous) broadcast(previous);
+  startSoloRound(socket, false);
+}
+
+function handleSoloAction(socket, payload) {
+  if (socket.role !== "solo") return sendError(socket, "Tryb solo nie jest wlaczony.");
+  const action = payload.action;
+
+  if (action === "start") {
+    if (!socket.soloSession) startSoloRound(socket, false);
+    const session = socket.soloSession;
+    if (session && !session.answered && session.phase !== "playing" && session.phase !== "loading") {
+      session.phase = "loading";
+      session.startedAt = 0;
+      session.loadingStartedAt = now();
+      session.offset = 0;
+      session.revealed = false;
+      session.mediaReady = false;
+    }
+    return sendSoloState(socket);
+  }
+
+  if (action === "mediaReady") {
+    const session = socket.soloSession;
+    const key = rawText(payload.key, 240);
+    if (!session || !session.track || session.answered || key !== soloTrackKey(session.track)) return;
+    if (session.phase === "loading" || session.phase === "idle") {
+      session.phase = "playing";
+      session.startedAt = now();
+      session.loadingStartedAt = 0;
+      session.offset = 0;
+      session.revealed = false;
+      session.mediaReady = true;
+      if (socket.soloLoadFailures) delete socket.soloLoadFailures[key];
+      clearSoloTrackLoadError(session.track);
+    }
+    return sendSoloState(socket);
+  }
+
+  if (action === "mediaError") {
+    const session = socket.soloSession;
+    const key = rawText(payload.key, 240);
+    if (!session || !session.track || session.answered || key !== soloTrackKey(session.track)) return;
+    if (!socket.soloLoadFailures) socket.soloLoadFailures = {};
+    socket.soloLoadFailures[key] = true;
+    markSoloTrackLoadError(session.track, payload.reason);
+    return startSoloRound(socket, true);
+  }
+
+  if (action === "answer") {
+    return recordSoloAnswer(socket, Boolean(payload.guessed), payload.answer || "");
+  }
+
+  if (action === "answerText") {
+    const session = socket.soloSession;
+    const answerText = rawText(payload.answer, 180);
+    if (!answerText) return sendError(socket, "Wybierz anime z listy.");
+    return recordSoloAnswer(socket, soloAnswerMatches(session && session.track, answerText), answerText);
+  }
+
+  if (action === "next") {
+    return startSoloRound(socket, Boolean(payload.autoplay));
+  }
 }
 
 function validateGroupJoin(room, socket, payload) {
@@ -1040,7 +1769,7 @@ function joinRoom(socket, payload) {
   }
 
   if (requestedRole === "player" && isIpBlocked(room, socket.ip)) {
-    return rejectJoin(socket, "Ten adres IP jest zablokowany w tym pokoju.");
+    return rejectJoin(socket, "Nie mozesz dolaczyc do tego pokoju.");
   }
 
   socket.role = requestedRole;
@@ -1077,6 +1806,7 @@ function requireModerator(socket) {
 function handleBuzz(socket) {
   if (!socket.roomCode) return;
   const room = getRoom(socket.roomCode);
+  if (isRoundClosed(room)) return sendError(socket, "Ten opening jest juz zamkniety.");
   if (socket.role !== "player" || room.phase !== "playing" || room.currentBuzzer) return;
   if (room.lockedGroups[socket.team]) return sendError(socket, "Twoja grupa już próbowała w tej rundzie.");
 
@@ -1144,6 +1874,66 @@ function removeLibraryTrack(room, payload) {
     return track.id !== trackId;
   });
   return before === room.libraryTracks.length ? "Nie znaleziono openingu w bibliotece." : null;
+}
+
+function updateLibraryTrackDifficulty(room, payload) {
+  const track = libraryTrack(room, payload.trackId);
+  if (!track) return "Nie znaleziono openingu w bibliotece.";
+  if (!difficultyExists(payload.difficulty)) return "Niepoprawny poziom trudnosci.";
+  track.difficulty = payload.difficulty;
+  return null;
+}
+
+function updateTrackListDifficultyByKey(list, statKey, difficulty) {
+  let changed = 0;
+  (list || []).forEach(function (track) {
+    if (!track || soloTrackKey(track) !== statKey) return;
+    track.difficulty = difficulty;
+    changed += 1;
+  });
+  return changed;
+}
+
+function updateSoloStatDifficulty(payload) {
+  const statKey = rawText(payload.key, 120);
+  const difficulty = rawText(payload.difficulty, 40);
+  if (!statKey) return "Nie znaleziono openingu.";
+  if (!difficultyExists(difficulty)) return "Niepoprawny poziom trudnosci.";
+
+  let changed = 0;
+  rooms.forEach(function (room) {
+    const roomChanged = updateTrackListDifficultyByKey(room.tracks, statKey, difficulty)
+      + updateTrackListDifficultyByKey(room.libraryTracks, statKey, difficulty);
+    if (!roomChanged) return;
+    changed += roomChanged;
+    touch(room);
+    saveRoomConfig(room);
+  });
+
+  Object.keys(persistedRoomConfigs).forEach(function (code) {
+    if (code === "__soloStats" || rooms.has(code)) return;
+    const config = persistedRoomConfigs[code];
+    if (!config || typeof config !== "object") return;
+    const configChanged = updateTrackListDifficultyByKey(config.tracks, statKey, difficulty)
+      + updateTrackListDifficultyByKey(config.libraryTracks, statKey, difficulty);
+    if (!configChanged) return;
+    changed += configChanged;
+    config.updatedAt = now();
+  });
+
+  const store = soloStatsStore();
+  if (store[statKey]) {
+    store[statKey].difficulty = difficulty;
+    changed += 1;
+  }
+
+  if (!changed) return "Nie znaleziono openingu do zmiany poziomu.";
+  savePersistedRooms();
+  rooms.forEach(function (room) {
+    broadcast(room);
+  });
+  broadcastModeratorStats();
+  return null;
 }
 
 function updateTrack(room, payload) {
@@ -1263,7 +2053,7 @@ function blockPlayerIp(room, socket, payload) {
   const playerId = cleanText(payload.playerId, "", 80);
   const target = playerId ? findSocket(playerId) : null;
   const ip = normalizeIp(payload.ip || (target && target.ip));
-  if (!ip) return "Nie znaleziono adresu IP tej osoby.";
+  if (!ip) return "Nie znaleziono tej osoby do zablokowania.";
 
   room.blockedIps[ip] = {
     ip: ip,
@@ -1275,7 +2065,7 @@ function blockPlayerIp(room, socket, payload) {
 
   roomClients(room).forEach(function (client) {
     if (client.role === "player" && normalizeIp(client.ip) === ip) {
-      send(client, { type: "kicked", message: "Administrator zablokowal ten adres IP." });
+      send(client, { type: "kicked", message: "Administrator zablokowal dostep do gry." });
       client.joined = false;
       client.raw.end();
     }
@@ -1285,8 +2075,14 @@ function blockPlayerIp(room, socket, payload) {
 }
 
 function unblockPlayerIp(room, payload) {
-  const ip = normalizeIp(payload.ip);
-  if (!ip || !room.blockedIps[ip]) return "Nie znaleziono tej blokady IP.";
+  const blockId = rawText(payload.blockId || payload.id, 80);
+  let ip = normalizeIp(payload.ip);
+  if (!ip && blockId) {
+    ip = Object.keys(room.blockedIps || {}).find(function (candidate) {
+      return blockIdForIp(candidate) === blockId;
+    }) || "";
+  }
+  if (!ip || !room.blockedIps[ip]) return "Nie znaleziono tej blokady.";
   delete room.blockedIps[ip];
   return "";
 }
@@ -1315,10 +2111,51 @@ function removeGroup(room, payload) {
   return "";
 }
 
+function removeRoom(socket, payload) {
+  const targetCode = roomCode(payload.roomCode || payload.code);
+  if (!targetCode) return "Nie znaleziono pokoju.";
+
+  const existing = rooms.get(targetCode);
+  const deletingCurrent = socket.roomCode === targetCode;
+
+  if (existing) {
+    roomClients(existing).forEach(function (client) {
+      if (client.id === socket.id) return;
+      send(client, { type: "kicked", message: "Administrator usunal ten pokoj." });
+      client.joined = false;
+      client.raw.end();
+    });
+    rooms.delete(targetCode);
+  }
+
+  delete persistedRoomConfigs[targetCode];
+  savePersistedRooms();
+
+  if (deletingCurrent) {
+    const fresh = getRoom(fallbackRoomCodeAfterRemoval(targetCode));
+    socket.roomCode = fresh.code;
+    socket.team = "Administrator";
+    socket.playMode = "group";
+    socket.joined = true;
+    socket.personalScore = 0;
+    send(socket, { type: "joined", id: socket.id, roomCode: fresh.code, role: socket.role, team: socket.team, playMode: socket.playMode || "group" });
+    broadcast(fresh);
+  }
+
+  broadcastModeratorStats();
+  return "";
+}
+
 async function handleModerator(socket, payload) {
   if (!socket.roomCode || !requireModerator(socket)) return;
   const room = getRoom(socket.roomCode);
   const action = payload.action;
+
+  if (action === "removeRoom") {
+    const error = removeRoom(socket, payload || {});
+    if (error) return sendError(socket, error);
+    return;
+  }
 
   if (action === "addTrack") {
     const error = addTrack(room, payload.track || {});
@@ -1345,6 +2182,17 @@ async function handleModerator(socket, payload) {
   if (action === "removeLibraryTrack") {
     const error = removeLibraryTrack(room, payload || {});
     if (error) return sendError(socket, error);
+  }
+
+  if (action === "updateLibraryDifficulty") {
+    const error = updateLibraryTrackDifficulty(room, payload || {});
+    if (error) return sendError(socket, error);
+  }
+
+  if (action === "updateSoloStatDifficulty") {
+    const error = updateSoloStatDifficulty(payload || {});
+    if (error) return sendError(socket, error);
+    return;
   }
 
   if (action === "importPlaylist") {
@@ -1506,7 +2354,7 @@ async function handleModerator(socket, payload) {
   if (action === "updateSettings") {
     const settings = payload.settings || {};
     room.settings = {
-      clipDuration: 10,
+      clipDuration: DEFAULT_CLIP_DURATION,
       segmentSplit: 5,
       difficultyScores: normalizeDifficultySettings(settings.difficultyScores || room.settings.difficultyScores)
     };
@@ -1533,7 +2381,7 @@ async function handleModerator(socket, payload) {
 
   if (action === "resetRoom") {
     clearRoomConfig(room);
-  } else if (["addTrack", "addLibraryTrack", "addLibraryToMain", "removeLibraryTrack", "importPlaylist", "updateTrack", "removeTrack", "selectTrack", "clearTrackResult", "updateSettings", "play", "guessed", "awardBuzz", "revealTitle", "blockIp", "unblockIp"].includes(action)) {
+  } else if (["addTrack", "addLibraryTrack", "addLibraryToMain", "removeLibraryTrack", "updateLibraryDifficulty", "importPlaylist", "updateTrack", "removeTrack", "selectTrack", "clearTrackResult", "updateSettings", "play", "guessed", "awardBuzz", "revealTitle", "blockIp", "unblockIp"].includes(action)) {
     saveRoomConfig(room);
   }
 
@@ -1558,7 +2406,9 @@ function handleMessage(socket, text) {
   }
 
   if (payload.type === "join") return joinRoom(socket, payload);
+  if (payload.type === "soloJoin") return handleSoloJoin(socket, payload);
   if (payload.type === "buzz") return handleBuzz(socket);
+  if (payload.type === "soloAction") return handleSoloAction(socket, payload);
   if (payload.type === "profile") return updateProfile(socket, payload);
   if (payload.type === "moderator") {
     Promise.resolve(handleModerator(socket, payload)).catch(function () {
@@ -1580,7 +2430,8 @@ function contentType(filePath) {
     ".svg": "image/svg+xml",
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav",
-    ".ogg": "audio/ogg"
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4"
   }[extension] || "application/octet-stream";
 }
 
@@ -1592,8 +2443,56 @@ function cacheControl(filePath) {
   return "public, max-age=3600";
 }
 
+function sendJson(res, status, payload) {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store"
+  });
+  res.end(JSON.stringify(payload));
+}
+
+function handleAudioUploadRequest(req, res) {
+  if (req.method !== "POST") return sendJson(res, 405, { error: "Niepoprawna metoda." });
+
+  let size = 0;
+  const chunks = [];
+  req.on("data", function (chunk) {
+    size += chunk.length;
+    if (size > MAX_AUDIO_UPLOAD_BODY_BYTES) {
+      res.writeHead(413, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "Plik audio jest za duzy. Limit to 25 MB." }));
+      req.destroy();
+      return;
+    }
+    chunks.push(chunk);
+  });
+
+  req.on("end", function () {
+    let payload;
+    try {
+      payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch (error) {
+      return sendJson(res, 400, { error: "Niepoprawny upload audio." });
+    }
+
+    if (rawText(payload.moderatorPassword, 120) !== MODERATOR_PASSWORD) {
+      return sendJson(res, 403, { error: "Nieprawidlowe haslo moderatora." });
+    }
+
+    const result = saveUploadedAudio(payload || {});
+    if (result.error) return sendJson(res, 400, { error: result.error });
+    return sendJson(res, 200, {
+      file: result.file,
+      localAudioFiles: listLocalAudioFiles(),
+      message: "Wgrano audio: " + result.file.name
+    });
+  });
+}
+
 function serve(req, res) {
   const requestUrl = new URL(req.url, "http://" + (req.headers.host || "localhost"));
+  if (requestUrl.pathname === "/api/upload-audio") return handleAudioUploadRequest(req, res);
+
   let pathname = decodeURIComponent(requestUrl.pathname);
   if (pathname === "/") pathname = "/index.html";
 
@@ -1761,6 +2660,15 @@ setInterval(function () {
       if (resultChanged) saveRoomConfig(room);
       touch(room);
       broadcast(room);
+    }
+  });
+
+  sockets.forEach(function (socket) {
+    const session = socket.soloSession;
+    if (socket.role === "solo" && session && session.phase === "playing" && !session.answered && soloElapsed(socket) >= SOLO_CLIP_DURATION) {
+      session.offset = SOLO_CLIP_DURATION;
+      session.phase = "ended";
+      sendSoloState(socket);
     }
   });
 }, 250);

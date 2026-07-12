@@ -422,6 +422,31 @@ h2 {
   gap: 10px;
 }
 
+.volume-control {
+  display: inline-grid;
+  grid-template-columns: auto minmax(92px, 132px) 42px;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 12px;
+  color: var(--muted);
+  background: rgba(39, 31, 45, 0.86);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.volume-control input {
+  width: 100%;
+  accent-color: var(--pink);
+}
+
+.volume-control strong {
+  color: var(--text);
+  text-align: right;
+}
+
 .pill,
 .phase-pill {
   display: inline-flex;
@@ -1645,6 +1670,11 @@ h2 {
 
   .room-tools {
     align-items: stretch;
+  }
+
+  .volume-control {
+    grid-template-columns: auto minmax(0, 1fr) 42px;
+    width: 100%;
   }
 
   .room-tools .pill,

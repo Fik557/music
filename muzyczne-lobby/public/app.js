@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 
 const MODERATOR_PASSWORD = "Kochamkotki";
 const SESSION_KEY = "animeOpeningQuizSession";
+const PAGE_VOLUME_KEY = "animeOpeningQuizVolume";
 const MAX_AVATAR_DATA_LENGTH = 60000;
 const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
 const AVATAR_OUTPUT_SIZE = 96;
@@ -49,6 +50,8 @@ const roomInput = $("#roomInput");
 const roleLabel = $("#roleLabel");
 const connectionStatus = $("#connectionStatus");
 const roomCodeLabel = $("#roomCodeLabel");
+const volumeSlider = $("#volumeSlider");
+const volumeValue = $("#volumeValue");
 const copyLinkButton = $("#copyLinkButton");
 const leaveButton = $("#leaveButton");
 const appShell = $(".shell");
@@ -160,6 +163,7 @@ let ownId = null;
 let loginMode = "solo";
 let lastStateAt = Date.now();
 let soundEnabled = false;
+let pageVolume = loadPageVolume();
 let reconnectTimer = null;
 let toastTimer = null;
 let editingTrackId = null;
@@ -226,6 +230,52 @@ function showToast(message) {
   toast.classList.remove("hidden");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.add("hidden"), 3200);
+}
+
+function loadPageVolume() {
+  try {
+    const saved = window.localStorage.getItem(PAGE_VOLUME_KEY);
+    const percent = saved == null ? 100 : Number(saved);
+    if (!Number.isFinite(percent)) return 1;
+    return Math.max(0, Math.min(1, percent / 100));
+  } catch (error) {
+    return 1;
+  }
+}
+
+function pageVolumePercent() {
+  return Math.round(pageVolume * 100);
+}
+
+function applyPageVolume(syncPlayback) {
+  const percent = pageVolumePercent();
+  audio.volume = pageVolume;
+  if (volumeSlider) volumeSlider.value = String(percent);
+  if (volumeValue) volumeValue.textContent = percent + "%";
+  try {
+    if (youtubePlayerReady && youtubePlayer && youtubePlayer.setVolume) {
+      youtubePlayer.setVolume(percent);
+      if (percent > 0 && youtubePlayer.unMute) youtubePlayer.unMute();
+    }
+  } catch (error) {}
+  if (syncPlayback) syncAudio(true);
+}
+
+function setPageVolume(value) {
+  const percent = Math.max(0, Math.min(100, Number(value)));
+  pageVolume = Number.isFinite(percent) ? percent / 100 : 1;
+  try {
+    window.localStorage.setItem(PAGE_VOLUME_KEY, String(pageVolumePercent()));
+  } catch (error) {}
+  applyPageVolume(true);
+}
+
+applyPageVolume(false);
+
+if (volumeSlider) {
+  volumeSlider.addEventListener("input", function () {
+    setPageVolume(volumeSlider.value);
+  });
 }
 
 function normalizeAvatarData(value) {
@@ -394,6 +444,7 @@ function buzzerSoundKey(room) {
 
 function playBuzzerSound() {
   if (!soundEnabled) return;
+  if (pageVolume <= 0) return;
   const context = ensureBuzzerAudioContext();
   if (!context) return;
   if (context.state === "suspended") context.resume().catch(function () {});
@@ -405,7 +456,7 @@ function playBuzzerSound() {
   tone.frequency.setValueAtTime(760, start);
   tone.frequency.exponentialRampToValueAtTime(420, start + 0.18);
   gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(0.24, start + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.24 * pageVolume, start + 0.015);
   gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.24);
   tone.connect(gain);
   gain.connect(context.destination);
@@ -2092,6 +2143,7 @@ function syncAudio(force) {
   }
 
   pauseYouTube();
+  audio.volume = pageVolume;
   const desiredUrl = new URL(track.audioUrl, location.href).href;
   if (audio.src !== desiredUrl) {
     audio.src = desiredUrl;
@@ -2195,7 +2247,7 @@ function ensureYouTubePlayer(track, desiredTime) {
           youtubeVideoId = track.videoId;
           try {
             youtubePlayer.unMute();
-            youtubePlayer.setVolume(100);
+            youtubePlayer.setVolume(pageVolumePercent());
             if (isSoloLoadingTrack(track) && youtubePlayer.cueVideoById) {
               youtubePlayer.cueVideoById({ videoId: track.videoId, startSeconds: desiredTime });
             } else {
@@ -2279,7 +2331,7 @@ function syncYouTube(track, force, clipElapsed) {
 
     if (state.phase === "playing" && soundEnabled) {
       youtubePlayer.unMute();
-      youtubePlayer.setVolume(100);
+      youtubePlayer.setVolume(pageVolumePercent());
       youtubePlayer.playVideo();
     } else {
       youtubePlayer.pauseVideo();

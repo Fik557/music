@@ -15,6 +15,7 @@ const sockets = new Map();
 const soloStreaks = new Map();
 const ANSWER_TIME_LIMIT = 15;
 const SOLO_CLIP_DURATION = 15;
+const SOLO_MEDIA_LOAD_TIMEOUT = 5;
 const DEFAULT_CLIP_DURATION = 15;
 const MAX_AVATAR_LENGTH = 60000;
 const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -2665,6 +2666,17 @@ setInterval(function () {
 
   sockets.forEach(function (socket) {
     const session = socket.soloSession;
+    if (socket.role === "solo" && session && session.phase === "loading" && !session.answered) {
+      const loadingStartedAt = Number(session.loadingStartedAt || 0);
+      if (loadingStartedAt > 0 && now() - loadingStartedAt >= SOLO_MEDIA_LOAD_TIMEOUT) {
+        if (!socket.soloLoadFailures) socket.soloLoadFailures = {};
+        const key = soloTrackKey(session.track);
+        if (key) socket.soloLoadFailures[key] = true;
+        markSoloTrackLoadError(session.track, "Opening nie zaladowal sie w 5 sekund.");
+        startSoloRound(socket, true);
+        return;
+      }
+    }
     if (socket.role === "solo" && session && session.phase === "playing" && !session.answered && soloElapsed(socket) >= SOLO_CLIP_DURATION) {
       session.offset = SOLO_CLIP_DURATION;
       session.phase = "ended";

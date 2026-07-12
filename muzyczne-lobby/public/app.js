@@ -6,7 +6,7 @@ const MAX_AVATAR_DATA_LENGTH = 60000;
 const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
 const AVATAR_OUTPUT_SIZE = 96;
 const AVATAR_OUTPUT_QUALITY = 0.72;
-const MEDIA_LOAD_TIMEOUT_MS = 12000;
+const MEDIA_LOAD_TIMEOUT_MS = 5000;
 const DIFFICULTY_LABELS = {
   very_easy: "Very easy",
   easy: "Easy",

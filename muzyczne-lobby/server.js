@@ -1361,6 +1361,12 @@ function visibleTrack(track, socket, room) {
   };
 }
 
+function soloTrackSecondStart(track) {
+  const startAtFirst = numericTrackTime(track && track.startAtFirst, 0);
+  const startAtSecond = numericTrackTime(track && track.startAtSecond, startAtFirst + SOLO_SEGMENT_SPLIT);
+  return Math.abs(startAtSecond - 5) < 0.001 ? SOLO_SEGMENT_SPLIT : startAtSecond;
+}
+
 function peopleForRoom(room, isModerator) {
   const clients = roomClients(room).filter(function (client) {
     return client.joined && client.role === "player";
@@ -1523,7 +1529,7 @@ function visibleSoloTrack(session) {
     durationText: track.durationText || "",
     durationSeconds: numberInRange(track.durationSeconds, 0, 0, 86400),
     startAtFirst: numericTrackTime(track.startAtFirst, 0),
-    startAtSecond: numericTrackTime(track.startAtSecond, numericTrackTime(track.startAtFirst, 0) + SOLO_SEGMENT_SPLIT),
+    startAtSecond: soloTrackSecondStart(track),
     startAt: numericTrackTime(track.startAtFirst, 0),
     animeHintSteps: revealed ? [] : animeHintSteps(track.anime),
     animeHintStartAt: Math.max(0, SOLO_CLIP_DURATION - 3),

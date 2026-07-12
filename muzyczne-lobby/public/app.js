@@ -1252,7 +1252,12 @@ function animeHintForTrack(track) {
     ? Number(track.animeHintStartAt)
     : Math.max(0, duration - 3);
   if (estimatedElapsed() < startAt) return "";
-  return steps[0] || "";
+  const hint = steps[0] || "";
+  if (profile && profile.role === "solo") {
+    const first = Array.from(String(hint)).find((char) => /[\p{L}\p{N}]/u.test(char));
+    return first || "";
+  }
+  return hint;
 }
 
 function renderSoloPracticeScore() {

@@ -775,6 +775,11 @@ function animeHintSteps(title) {
   return [maskAnimeTitle(rawText(title, 180) || "Anime", 1)];
 }
 
+function soloAnimeHintSteps(title) {
+  const first = Array.from(rawText(title, 180) || "Anime").find(isHintCharacter);
+  return first ? [first] : [];
+}
+
 function difficultyLabel(key) {
   const match = DIFFICULTIES.find(function (difficulty) {
     return difficulty.key === key;
@@ -1531,7 +1536,7 @@ function visibleSoloTrack(session) {
     startAtFirst: numericTrackTime(track.startAtFirst, 0),
     startAtSecond: soloTrackSecondStart(track),
     startAt: numericTrackTime(track.startAtFirst, 0),
-    animeHintSteps: revealed ? [] : animeHintSteps(track.anime),
+    animeHintSteps: revealed ? [] : soloAnimeHintSteps(track.anime),
     animeHintStartAt: Math.max(0, SOLO_CLIP_DURATION - 3),
     revealed: revealed,
     result: null

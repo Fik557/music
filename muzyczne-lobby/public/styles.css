@@ -1170,6 +1170,19 @@ h2 {
   text-decoration: none;
 }
 
+.admin-report-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-report-actions button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-weight: 900;
+}
+
 .danger-button {
   border-color: rgba(255, 114, 170, 0.32);
   color: #ffd3e3;
@@ -1767,6 +1780,10 @@ h2 {
   }
 
   .admin-report-source {
+    justify-content: flex-start;
+  }
+
+  .admin-report-actions {
     justify-content: flex-start;
   }
 }

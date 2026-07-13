@@ -600,9 +600,15 @@ function publicSoloReports() {
         opening: rawText(report.opening, 120),
         difficulty: difficultyExists(report.difficulty) ? report.difficulty : "medium",
         difficultyLabel: difficultyLabel(report.difficulty),
+        coverUrl: rawText(report.coverUrl, 700),
+        description: rawText(report.description, 420),
         audioUrl: rawText(report.audioUrl, 700),
         videoId: rawText(report.videoId, 40),
-        sourceTitle: rawText(report.sourceTitle, 180)
+        sourceTitle: rawText(report.sourceTitle, 180),
+        durationText: rawText(report.durationText, 20),
+        durationSeconds: numberInRange(report.durationSeconds, 0, 0, 86400),
+        startAtFirst: numberInRange(report.startAtFirst, 0, 0, 36000),
+        startAtSecond: numberInRange(report.startAtSecond, 5, 0, 36000)
       };
     });
 }
@@ -1889,9 +1895,15 @@ function recordSoloReport(socket, payload) {
     anime: rawText(track.anime, 180) || "Anime bez nazwy",
     opening: rawText(track.opening, 120),
     difficulty: difficultyExists(track.difficulty) ? track.difficulty : "medium",
+    coverUrl: rawText(track.coverUrl, 700),
+    description: rawText(track.description, 420),
     audioUrl: rawText(track.audioUrl, 700),
     videoId: rawText(track.videoId, 40),
-    sourceTitle: rawText(track.sourceTitle, 180)
+    sourceTitle: rawText(track.sourceTitle, 180),
+    durationText: rawText(track.durationText, 20),
+    durationSeconds: numberInRange(track.durationSeconds, 0, 0, 86400),
+    startAtFirst: numericTrackTime(track.startAtFirst, 0),
+    startAtSecond: numericTrackTime(track.startAtSecond, numericTrackTime(track.startAtFirst, 0) + 5)
   });
   if (reports.length > 300) reports.splice(0, reports.length - 300);
 
@@ -2204,6 +2216,126 @@ function updateSoloStatDifficulty(payload) {
   return null;
 }
 
+function removeSoloReport(payload) {
+  const reportId = rawText(payload.reportId || payload.id, 80);
+  if (!reportId) return "Nie znaleziono zgloszenia.";
+
+  const reports = soloReportsStore();
+  const before = reports.length;
+  const kept = reports.filter(function (report) {
+    return rawText(report.id, 80) !== reportId;
+  });
+  if (kept.length === before) return "Nie znaleziono zgloszenia.";
+
+  persistedRoomConfigs.__soloReports = kept;
+  savePersistedRooms();
+  broadcastModeratorStats();
+  return "";
+}
+
+function mergeSoloStatEntry(fromKey, toKey, track) {
+  if (!fromKey || !toKey || fromKey === toKey) return;
+  const store = soloStatsStore();
+  if (!store[fromKey]) return;
+  if (!store[toKey]) {
+    store[toKey] = store[fromKey];
+  } else {
+    store[toKey].attempts = Math.max(0, Number(store[toKey].attempts || 0)) + Math.max(0, Number(store[fromKey].attempts || 0));
+    store[toKey].guessed = Math.max(0, Number(store[toKey].guessed || 0)) + Math.max(0, Number(store[fromKey].guessed || 0));
+    store[toKey].soloAttempts = Math.max(0, Number(store[toKey].soloAttempts || 0)) + Math.max(0, Number(store[fromKey].soloAttempts || 0));
+    store[toKey].gameAttempts = Math.max(0, Number(store[toKey].gameAttempts || 0)) + Math.max(0, Number(store[fromKey].gameAttempts || 0));
+  }
+  updateSoloStatMeta(track, store[toKey]);
+  delete store[fromKey];
+}
+
+function updateReportMetaForTrack(oldKey, track) {
+  const newKey = soloTrackKey(track);
+  const stats = soloStatsStore();
+  if (stats[newKey]) updateSoloStatMeta(track, stats[newKey]);
+  soloReportsStore().forEach(function (report) {
+    if (rawText(report.trackKey, 140) !== oldKey && rawText(report.trackId, 80) !== rawText(track.id, 80)) return;
+    report.trackKey = newKey;
+    report.trackId = rawText(track.id, 80);
+    report.anime = rawText(track.anime, 180) || "Anime bez nazwy";
+    report.opening = rawText(track.opening, 120);
+    report.difficulty = difficultyExists(track.difficulty) ? track.difficulty : "medium";
+    report.coverUrl = rawText(track.coverUrl, 700);
+    report.description = rawText(track.description, 420);
+    report.audioUrl = rawText(track.audioUrl, 700);
+    report.videoId = rawText(track.videoId, 40);
+    report.sourceTitle = rawText(track.sourceTitle, 180);
+    report.durationText = rawText(track.durationText, 20);
+    report.durationSeconds = numberInRange(track.durationSeconds, 0, 0, 86400);
+    report.startAtFirst = numericTrackTime(track.startAtFirst, 0);
+    report.startAtSecond = numericTrackTime(track.startAtSecond, numericTrackTime(track.startAtFirst, 0) + 5);
+  });
+  mergeSoloStatEntry(oldKey, newKey, track);
+}
+
+function updateTrackListByReportKey(list, statKey, payload) {
+  let changed = 0;
+  let sampleTrack = null;
+  const trackId = rawText(payload.trackId, 80);
+  (list || []).forEach(function (track, index) {
+    if (!track) return;
+    const matchesKey = statKey && soloTrackKey(track) === statKey;
+    const matchesId = trackId && rawText(track.id, 80) === trackId;
+    if (!matchesKey && !matchesId) return;
+    const oldKey = soloTrackKey(track);
+    const normalized = normalizeTrack(payload.track || {}, track);
+    if (normalized.error) throw new Error(normalized.error);
+    list[index] = normalized.track;
+    updateReportMetaForTrack(oldKey, normalized.track);
+    sampleTrack = normalized.track;
+    changed += 1;
+  });
+  return { changed: changed, sampleTrack: sampleTrack };
+}
+
+function updateReportedTrack(payload) {
+  const statKey = rawText(payload.trackKey || payload.key, 140);
+  if (!statKey && !rawText(payload.trackId, 80)) return "Nie znaleziono zgloszonego openingu.";
+
+  let changed = 0;
+  let sampleTrack = null;
+
+  try {
+    rooms.forEach(function (room) {
+      const tracksResult = updateTrackListByReportKey(room.tracks, statKey, payload);
+      const libraryResult = updateTrackListByReportKey(room.libraryTracks, statKey, payload);
+      const roomChanged = tracksResult.changed + libraryResult.changed;
+      if (!roomChanged) return;
+      changed += roomChanged;
+      sampleTrack = tracksResult.sampleTrack || libraryResult.sampleTrack || sampleTrack;
+      touch(room);
+      saveRoomConfig(room);
+      broadcast(room);
+    });
+
+    Object.keys(persistedRoomConfigs).forEach(function (code) {
+      if (isMetaConfigKey(code) || rooms.has(code)) return;
+      const config = persistedRoomConfigs[code];
+      if (!config || typeof config !== "object") return;
+      const tracksResult = updateTrackListByReportKey(config.tracks, statKey, payload);
+      const libraryResult = updateTrackListByReportKey(config.libraryTracks, statKey, payload);
+      const configChanged = tracksResult.changed + libraryResult.changed;
+      if (!configChanged) return;
+      changed += configChanged;
+      sampleTrack = tracksResult.sampleTrack || libraryResult.sampleTrack || sampleTrack;
+      config.updatedAt = now();
+    });
+  } catch (error) {
+    return error.message || "Nie udalo sie zapisac openingu.";
+  }
+
+  if (!changed) return "Nie znaleziono zgloszonego openingu w bibliotece.";
+  if (sampleTrack) updateReportMetaForTrack(statKey, sampleTrack);
+  savePersistedRooms();
+  broadcastModeratorStats();
+  return "";
+}
+
 function updateTrack(room, payload) {
   const trackId = cleanText(payload.trackId, "", 80);
   const index = room.tracks.findIndex(function (track) {
@@ -2464,6 +2596,18 @@ async function handleModerator(socket, payload) {
 
   if (action === "updateSoloStatDifficulty") {
     const error = updateSoloStatDifficulty(payload || {});
+    if (error) return sendError(socket, error);
+    return;
+  }
+
+  if (action === "removeSoloReport") {
+    const error = removeSoloReport(payload || {});
+    if (error) return sendError(socket, error);
+    return;
+  }
+
+  if (action === "updateReportedTrack") {
+    const error = updateReportedTrack(payload || {});
     if (error) return sendError(socket, error);
     return;
   }

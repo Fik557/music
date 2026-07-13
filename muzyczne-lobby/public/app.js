@@ -959,9 +959,14 @@ trackForm.addEventListener("submit", function (event) {
   };
 
   if (editingTrackId) {
-    const action = editingTrackSource === "library" ? "updateLibraryTrack" : "updateTrack";
-    mod(action, Object.assign({ trackId: editingTrackId }, payload));
-    showToast(editingTrackSource === "library" ? "Zapisano opening w bibliotece." : "Zapisano opening.");
+    if (editingTrackSource === "report") {
+      mod("updateReportedTrack", Object.assign({ trackKey: editingTrackId }, payload));
+      showToast("Zapisano zgloszony opening.");
+    } else {
+      const action = editingTrackSource === "library" ? "updateLibraryTrack" : "updateTrack";
+      mod(action, Object.assign({ trackId: editingTrackId }, payload));
+      showToast(editingTrackSource === "library" ? "Zapisano opening w bibliotece." : "Zapisano opening.");
+    }
   } else {
     mod("addTrack", payload);
   }
@@ -1864,6 +1869,21 @@ function renderAdminReports() {
       link.rel = "noreferrer";
       source.append(link);
     }
+    const actions = node("div", "admin-report-actions");
+    const edit = node("button", "", "Edytuj opening");
+    const remove = node("button", "danger-button", "Usun");
+    edit.type = "button";
+    remove.type = "button";
+    edit.addEventListener("click", function () {
+      editReportedTrack(report);
+    });
+    remove.addEventListener("click", function () {
+      if (!window.confirm("Usunac to zgloszenie?")) return;
+      mod("removeSoloReport", { reportId: report.id });
+      showToast("Usunieto zgloszenie.");
+    });
+    actions.append(edit, remove);
+    source.append(actions);
     row.append(meta, source);
     adminReportList.append(row);
   });
@@ -1927,6 +1947,30 @@ function editTrack(track, source) {
     activeAdminPanel = "tracks";
     renderAdminPanelTabs();
   }
+  if (trackForm && trackForm.scrollIntoView) trackForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  trackAnimeInput.focus();
+}
+
+function editReportedTrack(report) {
+  editingTrackId = report.trackKey || report.trackId || "";
+  if (!editingTrackId) {
+    showToast("Nie znaleziono openingu do edycji.");
+    return;
+  }
+  editingTrackSource = "report";
+  trackAnimeInput.value = report.anime || "";
+  trackOpeningInput.value = report.opening || "";
+  trackDifficultyInput.value = report.difficulty || "medium";
+  trackUrlInput.value = report.audioUrl || "";
+  if (localAudioSelect) localAudioSelect.value = report.audioUrl || "";
+  trackStartFirstInput.value = String(finiteNumber(report.startAtFirst, 0));
+  trackStartSecondInput.value = String(finiteNumber(report.startAtSecond, 5));
+  trackCoverInput.value = report.coverUrl || "";
+  trackDescriptionInput.value = report.description || "";
+  trackSubmitButton.textContent = "Zapisz zgloszony";
+  cancelEditButton.classList.remove("hidden");
+  activeAdminPanel = "tracks";
+  renderAdminPanelTabs();
   if (trackForm && trackForm.scrollIntoView) trackForm.scrollIntoView({ behavior: "smooth", block: "start" });
   trackAnimeInput.focus();
 }

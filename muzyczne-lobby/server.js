@@ -447,6 +447,66 @@ function allSoloTracks() {
   return pool;
 }
 
+function shuffleSoloTrackKeys(keys) {
+  const shuffled = keys.slice();
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = crypto.randomInt(index + 1);
+    const current = shuffled[index];
+    shuffled[index] = shuffled[swapIndex];
+    shuffled[swapIndex] = current;
+  }
+  return shuffled;
+}
+
+function availableSoloTracks(socket, tracks) {
+  const skipped = socket.soloLoadFailures || {};
+  const stats = soloStatsStore();
+  let availableTracks = tracks.filter(function (track) {
+    const key = soloTrackKey(track);
+    return !skipped[key] && !(stats[key] && stats[key].mediaError);
+  });
+  if (!availableTracks.length) {
+    availableTracks = tracks.filter(function (track) {
+      return !skipped[soloTrackKey(track)];
+    });
+  }
+  return availableTracks.length ? availableTracks : tracks;
+}
+
+function nextRandomSoloTrack(socket, tracks) {
+  const availableTracks = availableSoloTracks(socket, tracks);
+  const byKey = {};
+  availableTracks.forEach(function (track) {
+    byKey[soloTrackKey(track)] = track;
+  });
+
+  const previousKey = socket.soloSession && socket.soloSession.track ? soloTrackKey(socket.soloSession.track) : "";
+  const hasPlayableQueuedTrack = Array.isArray(socket.soloQueue) && socket.soloQueue.some(function (key) {
+    return byKey[key] && (availableTracks.length < 2 || key !== previousKey);
+  });
+
+  if (!hasPlayableQueuedTrack) {
+    socket.soloQueue = shuffleSoloTrackKeys(availableTracks.map(function (track) {
+      return soloTrackKey(track);
+    }));
+    if (socket.soloQueue.length > 1 && socket.soloQueue[0] === previousKey) {
+      socket.soloQueue.push(socket.soloQueue.shift());
+    }
+  }
+
+  while (socket.soloQueue && socket.soloQueue.length) {
+    const key = socket.soloQueue.shift();
+    if (!byKey[key]) continue;
+    if (availableTracks.length > 1 && key === previousKey && socket.soloQueue.some(function (queuedKey) { return byKey[queuedKey]; })) {
+      socket.soloQueue.push(key);
+      continue;
+    }
+    return byKey[key];
+  }
+
+  return availableTracks[crypto.randomInt(availableTracks.length)];
+}
+
 function updateSoloStatMeta(track, entry) {
   entry.anime = rawText(track.anime, 180) || "Anime bez nazwy";
   entry.opening = rawText(track.opening, 120);
@@ -1767,28 +1827,7 @@ function startSoloRound(socket, autoplay) {
     return;
   }
 
-  const previousKey = socket.soloSession && socket.soloSession.track ? soloTrackKey(socket.soloSession.track) : "";
-  const skipped = socket.soloLoadFailures || {};
-  const stats = soloStatsStore();
-  let availableTracks = tracks.filter(function (track) {
-    const key = soloTrackKey(track);
-    return !skipped[key] && !(stats[key] && stats[key].mediaError);
-  });
-  if (!availableTracks.length) {
-    availableTracks = tracks.filter(function (track) {
-      return !skipped[soloTrackKey(track)];
-    });
-  }
-  if (!availableTracks.length) availableTracks = tracks;
-
-  let track = availableTracks[Math.floor(Math.random() * availableTracks.length)];
-  if (availableTracks.length > 1) {
-    let guard = 0;
-    while (soloTrackKey(track) === previousKey && guard < 8) {
-      track = availableTracks[Math.floor(Math.random() * availableTracks.length)];
-      guard += 1;
-    }
-  }
+  const track = nextRandomSoloTrack(socket, tracks);
 
   socket.soloSession = {
     track: track,
@@ -1921,6 +1960,7 @@ function handleSoloJoin(socket, payload) {
   socket.avatar = cleanAvatar(payload.avatar);
   socket.soloStreak = Math.max(0, Number(soloStreaks.get(socket.clientId) || socket.soloStreak || 0));
   socket.soloLoadFailures = {};
+  socket.soloQueue = [];
   socket.team = "Solo";
   socket.playMode = "solo";
   socket.joined = true;

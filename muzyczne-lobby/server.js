@@ -2063,6 +2063,20 @@ function updateLibraryTrackDifficulty(room, payload) {
   return null;
 }
 
+function updateLibraryTrack(room, payload) {
+  const trackId = cleanText(payload.trackId, "", 80);
+  const index = room.libraryTracks.findIndex(function (track) {
+    return track.id === trackId;
+  });
+  if (index < 0) return "Nie znaleziono openingu w bibliotece do edycji.";
+
+  const normalized = normalizeTrack(payload.track || {}, room.libraryTracks[index]);
+  if (normalized.error) return normalized.error;
+
+  room.libraryTracks[index] = normalized.track;
+  return null;
+}
+
 function updateTrackListDifficultyByKey(list, statKey, difficulty) {
   let changed = 0;
   (list || []).forEach(function (track) {
@@ -2363,6 +2377,11 @@ async function handleModerator(socket, payload) {
     if (error) return sendError(socket, error);
   }
 
+  if (action === "updateLibraryTrack") {
+    const error = updateLibraryTrack(room, payload || {});
+    if (error) return sendError(socket, error);
+  }
+
   if (action === "updateLibraryDifficulty") {
     const error = updateLibraryTrackDifficulty(room, payload || {});
     if (error) return sendError(socket, error);
@@ -2560,7 +2579,7 @@ async function handleModerator(socket, payload) {
 
   if (action === "resetRoom") {
     clearRoomConfig(room);
-  } else if (["addTrack", "addLibraryTrack", "addLibraryToMain", "removeLibraryTrack", "updateLibraryDifficulty", "importPlaylist", "updateTrack", "removeTrack", "selectTrack", "clearTrackResult", "updateSettings", "play", "guessed", "awardBuzz", "revealTitle", "blockIp", "unblockIp"].includes(action)) {
+  } else if (["addTrack", "addLibraryTrack", "addLibraryToMain", "removeLibraryTrack", "updateLibraryTrack", "updateLibraryDifficulty", "importPlaylist", "updateTrack", "removeTrack", "selectTrack", "clearTrackResult", "updateSettings", "play", "guessed", "awardBuzz", "revealTitle", "blockIp", "unblockIp"].includes(action)) {
     saveRoomConfig(room);
   }
 

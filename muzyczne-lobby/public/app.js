@@ -167,6 +167,7 @@ let pageVolume = loadPageVolume();
 let reconnectTimer = null;
 let toastTimer = null;
 let editingTrackId = null;
+let editingTrackSource = "tracks";
 let lastAudioErrorAt = 0;
 let youtubeApiRequested = false;
 let youtubeApiReady = false;
@@ -755,6 +756,7 @@ function returnToLogin(message) {
   soundEnabled = false;
   soundButton.textContent = "Wlacz dzwiek";
   editingTrackId = null;
+  editingTrackSource = "tracks";
   clearAvatarCrop();
   audio.pause();
   pauseYouTube();
@@ -927,7 +929,9 @@ trackForm.addEventListener("submit", function (event) {
   };
 
   if (editingTrackId) {
-    mod("updateTrack", Object.assign({ trackId: editingTrackId }, payload));
+    const action = editingTrackSource === "library" ? "updateLibraryTrack" : "updateTrack";
+    mod(action, Object.assign({ trackId: editingTrackId }, payload));
+    showToast(editingTrackSource === "library" ? "Zapisano opening w bibliotece." : "Zapisano opening.");
   } else {
     mod("addTrack", payload);
   }
@@ -1630,12 +1634,15 @@ function renderLibrary() {
         showToast("Zmieniono poziom w bibliotece.");
       });
       const add = node("button", "primary", "Do rundy");
+      const edit = node("button", "", "Edytuj");
       const remove = node("button", "danger-button", "Usun");
       add.type = "button";
+      edit.type = "button";
       remove.type = "button";
       add.addEventListener("click", () => mod("addLibraryToMain", { trackId: track.id }));
+      edit.addEventListener("click", () => editTrack(track, "library"));
       remove.addEventListener("click", () => mod("removeLibraryTrack", { trackId: track.id }));
-      actions.append(difficulty, add, remove);
+      actions.append(difficulty, add, edit, remove);
       row.append(meta, actions);
       list.append(row);
     });
@@ -1825,8 +1832,9 @@ function renderTracks() {
   });
 }
 
-function editTrack(track) {
+function editTrack(track, source) {
   editingTrackId = track.id;
+  editingTrackSource = source === "library" ? "library" : "tracks";
   trackAnimeInput.value = track.anime || "";
   trackOpeningInput.value = track.opening || "";
   trackDifficultyInput.value = track.difficulty || "medium";
@@ -1836,13 +1844,19 @@ function editTrack(track) {
   trackStartSecondInput.value = String(finiteNumber(track.startAtSecond, 5));
   trackCoverInput.value = track.coverUrl || "";
   trackDescriptionInput.value = track.description || "";
-  trackSubmitButton.textContent = "Zapisz";
+  trackSubmitButton.textContent = editingTrackSource === "library" ? "Zapisz biblioteke" : "Zapisz";
   cancelEditButton.classList.remove("hidden");
+  if (editingTrackSource === "library") {
+    activeAdminPanel = "tracks";
+    renderAdminPanelTabs();
+  }
+  if (trackForm && trackForm.scrollIntoView) trackForm.scrollIntoView({ behavior: "smooth", block: "start" });
   trackAnimeInput.focus();
 }
 
 function resetTrackForm() {
   editingTrackId = null;
+  editingTrackSource = "tracks";
   if (!trackAnimeInput) return;
   trackAnimeInput.value = "";
   trackOpeningInput.value = "";

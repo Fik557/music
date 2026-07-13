@@ -159,6 +159,13 @@
                   <button id="soloMissedButton" type="button">Nie zgadlem</button>
                   <button id="soloNextButton" type="button">Nastepny</button>
                 </div>
+                <details class="solo-report" id="soloReportPanel">
+                  <summary>Zglos blad</summary>
+                  <form class="solo-report-form" id="soloReportForm">
+                    <textarea id="soloReportInput" maxlength="700" rows="3" placeholder="Opisz blad" aria-label="Opis bledu"></textarea>
+                    <button id="soloReportSubmitButton" type="submit">Wyslij</button>
+                  </form>
+                </details>
               </div>
               <div class="answer-countdown hidden" id="answerCountdown" aria-live="polite">
                 <div class="answer-countdown-head">
@@ -200,6 +207,7 @@
             <button class="admin-panel-card" type="button" data-admin-panel-target="blocked">Zablokowane osoby</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="scoring">Punktacja poziomow</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="stats">% zgadniec</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="reports">Zgloszenia</button>
           </nav>
 
           <div class="mod-section mod-controls">
@@ -367,6 +375,14 @@
               <button id="statsSortAscButton" type="button">Najmniejsze</button>
             </div>
             <div class="admin-solo-stats-list" id="adminSoloStatsList"></div>
+          </div>
+
+          <div class="mod-section reports-section" data-admin-panel="reports">
+            <div class="panel-title">
+              <h2>Zgloszenia</h2>
+              <span id="adminReportsCount">0</span>
+            </div>
+            <div class="admin-report-list" id="adminReportList"></div>
           </div>
         </section>
       </section>

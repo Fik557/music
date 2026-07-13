@@ -389,11 +389,22 @@ function roomClients(room) {
   });
 }
 
+function isMetaConfigKey(code) {
+  return code === "__soloStats" || code === "__soloReports";
+}
+
 function soloStatsStore() {
   if (!persistedRoomConfigs.__soloStats || typeof persistedRoomConfigs.__soloStats !== "object" || Array.isArray(persistedRoomConfigs.__soloStats)) {
     persistedRoomConfigs.__soloStats = {};
   }
   return persistedRoomConfigs.__soloStats;
+}
+
+function soloReportsStore() {
+  if (!Array.isArray(persistedRoomConfigs.__soloReports)) {
+    persistedRoomConfigs.__soloReports = [];
+  }
+  return persistedRoomConfigs.__soloReports;
 }
 
 function soloTrackKey(track) {
@@ -423,7 +434,7 @@ function allSoloTracks() {
 
   Object.keys(persistedRoomConfigs).forEach(function (code) {
     const config = persistedRoomConfigs[code];
-    if (!config || typeof config !== "object" || code === "__soloStats") return;
+    if (!config || typeof config !== "object" || isMetaConfigKey(code)) return;
     (config.tracks || []).forEach((track) => addSoloTrack(pool, seen, track));
     (config.libraryTracks || []).forEach((track) => addSoloTrack(pool, seen, track));
   });
@@ -571,6 +582,31 @@ function publicSoloStats(currentKey) {
   });
 }
 
+function publicSoloReports() {
+  return soloReportsStore()
+    .slice()
+    .sort(function (a, b) {
+      return numberInRange(b.at, 0, 0, 9999999999) - numberInRange(a.at, 0, 0, 9999999999);
+    })
+    .map(function (report) {
+      return {
+        id: rawText(report.id, 80),
+        at: numberInRange(report.at, 0, 0, 9999999999),
+        nickname: cleanText(report.nickname, "Solo", 60),
+        message: rawText(report.message, 700),
+        trackKey: rawText(report.trackKey, 140),
+        trackId: rawText(report.trackId, 80),
+        anime: rawText(report.anime, 180) || "Anime bez nazwy",
+        opening: rawText(report.opening, 120),
+        difficulty: difficultyExists(report.difficulty) ? report.difficulty : "medium",
+        difficultyLabel: difficultyLabel(report.difficulty),
+        audioUrl: rawText(report.audioUrl, 700),
+        videoId: rawText(report.videoId, 40),
+        sourceTitle: rawText(report.sourceTitle, 180)
+      };
+    });
+}
+
 function roomStatsSources() {
   const sources = [];
   const seen = {};
@@ -586,7 +622,7 @@ function roomStatsSources() {
   });
 
   Object.keys(persistedRoomConfigs).forEach(function (code) {
-    if (code === "__soloStats" || seen[code]) return;
+    if (isMetaConfigKey(code) || seen[code]) return;
     const config = persistedRoomConfigs[code];
     if (!config || typeof config !== "object") return;
     sources.push({
@@ -677,7 +713,7 @@ function fallbackRoomCodeAfterRemoval(targetCode) {
     if (code !== targetCode) codes.push(code);
   });
   Object.keys(persistedRoomConfigs).forEach(function (code) {
-    if (code === "__soloStats" || code === targetCode || codes.includes(code)) return;
+    if (isMetaConfigKey(code) || code === targetCode || codes.includes(code)) return;
     const config = persistedRoomConfigs[code];
     if (!config || typeof config !== "object") return;
     codes.push(code);
@@ -1586,6 +1622,7 @@ function publicRoom(room, socket) {
       blockedIps: isModerator ? publicBlockedIps(room) : [],
       localAudioFiles: isModerator ? listLocalAudioFiles() : [],
       soloStats: isModerator ? publicSoloStats(room.currentTrackId ? soloTrackKey(currentTrack(room) || {}) : "") : [],
+      soloReports: isModerator ? publicSoloReports() : [],
       adminRooms: isModerator ? publicAdminRooms(room.code) : []
     }
   };
@@ -1832,6 +1869,38 @@ function recordSoloAnswer(socket, guessed, answerText) {
   broadcastModeratorStats();
 }
 
+function recordSoloReport(socket, payload) {
+  const session = socket.soloSession;
+  if (!session || !session.track) return "Nie ma openingu do zgloszenia.";
+
+  const message = rawText(payload.message, 700);
+  if (!message) return "Wpisz opis bledu.";
+
+  const track = session.track;
+  const reports = soloReportsStore();
+  reports.push({
+    id: id("report_"),
+    at: now(),
+    nickname: cleanText(socket.nickname, "Solo", 60),
+    clientId: rawText(socket.clientId, 80),
+    message: message,
+    trackKey: soloTrackKey(track),
+    trackId: rawText(track.id, 80),
+    anime: rawText(track.anime, 180) || "Anime bez nazwy",
+    opening: rawText(track.opening, 120),
+    difficulty: difficultyExists(track.difficulty) ? track.difficulty : "medium",
+    audioUrl: rawText(track.audioUrl, 700),
+    videoId: rawText(track.videoId, 40),
+    sourceTitle: rawText(track.sourceTitle, 180)
+  });
+  if (reports.length > 300) reports.splice(0, reports.length - 300);
+
+  savePersistedRooms();
+  send(socket, { type: "soloReportSaved", message: "Zgloszenie zapisane." });
+  broadcastModeratorStats();
+  return "";
+}
+
 function handleSoloJoin(socket, payload) {
   const previous = socket.roomCode ? getRoom(socket.roomCode) : null;
   socket.role = "solo";
@@ -1894,6 +1963,12 @@ function handleSoloAction(socket, payload) {
     const answerText = rawText(payload.answer, 180);
     if (!answerText) return sendError(socket, "Wybierz anime z listy.");
     return recordSoloAnswer(socket, soloAnswerMatches(session && session.track, answerText), answerText);
+  }
+
+  if (action === "report") {
+    const error = recordSoloReport(socket, payload || {});
+    if (error) return sendError(socket, error);
+    return;
   }
 
   if (action === "next") {
@@ -2104,7 +2179,7 @@ function updateSoloStatDifficulty(payload) {
   });
 
   Object.keys(persistedRoomConfigs).forEach(function (code) {
-    if (code === "__soloStats" || rooms.has(code)) return;
+    if (isMetaConfigKey(code) || rooms.has(code)) return;
     const config = persistedRoomConfigs[code];
     if (!config || typeof config !== "object") return;
     const configChanged = updateTrackListDifficultyByKey(config.tracks, statKey, difficulty)

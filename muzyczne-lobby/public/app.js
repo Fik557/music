@@ -79,6 +79,10 @@ const soloAnswerOptions = $("#soloAnswerOptions");
 const soloGuessedButton = $("#soloGuessedButton");
 const soloMissedButton = $("#soloMissedButton");
 const soloNextButton = $("#soloNextButton");
+const soloReportPanel = $("#soloReportPanel");
+const soloReportForm = $("#soloReportForm");
+const soloReportInput = $("#soloReportInput");
+const soloReportSubmitButton = $("#soloReportSubmitButton");
 const answerCountdown = $("#answerCountdown");
 const answerCountdownLabel = $("#answerCountdownLabel");
 const answerCountdownValue = $("#answerCountdownValue");
@@ -145,6 +149,8 @@ const adminSoloStatsList = $("#adminSoloStatsList");
 const adminSoloStatsCount = $("#adminSoloStatsCount");
 const adminRoomList = $("#adminRoomList");
 const adminRoomsCount = $("#adminRoomsCount");
+const adminReportList = $("#adminReportList");
+const adminReportsCount = $("#adminReportsCount");
 const statsSortDescButton = $("#statsSortDescButton");
 const statsSortAscButton = $("#statsSortAscButton");
 
@@ -190,6 +196,7 @@ let buzzerAudioContext = null;
 let lastBuzzerSoundKey = "";
 let activeAdminPanel = "tracks";
 let lastSoloAnswerTrackId = "";
+let lastSoloReportTrackId = "";
 let adminStatsSort = "desc";
 let avatarCrop = {
   zoom: 1,
@@ -613,6 +620,7 @@ function connect() {
       if (playlistImportButton) playlistImportButton.disabled = false;
       if (youtubeSearchButton) youtubeSearchButton.disabled = false;
       if (audioUploadButton) audioUploadButton.disabled = false;
+      if (soloReportSubmitButton) soloReportSubmitButton.disabled = false;
       if (playlistImportStatus) playlistImportStatus.textContent = payload.message;
       if (audioUploadStatus) audioUploadStatus.textContent = payload.message;
       showToast(payload.message);
@@ -630,6 +638,12 @@ function connect() {
       if (youtubeSearchButton) youtubeSearchButton.disabled = false;
       renderSearchResults();
       showToast("Znaleziono wynikow: " + latestSearchResults.length + ".");
+    }
+    if (payload.type === "soloReportSaved") {
+      if (soloReportSubmitButton) soloReportSubmitButton.disabled = false;
+      if (soloReportInput) soloReportInput.value = "";
+      if (soloReportPanel) soloReportPanel.open = false;
+      showToast(payload.message || "Zgloszenie zapisane.");
     }
     if (payload.type === "joined") {
       ownId = payload.id;
@@ -884,6 +898,22 @@ if (soloAnswerForm) {
       }
     }
     send({ type: "soloAction", action: "answerText", answer });
+  });
+}
+if (soloReportForm) {
+  soloReportForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    const message = soloReportInput ? soloReportInput.value.trim() : "";
+    if (!message) {
+      showToast("Wpisz opis bledu.");
+      return;
+    }
+    if (!state || !state.currentTrack) {
+      showToast("Najpierw wylosuj opening.");
+      return;
+    }
+    if (soloReportSubmitButton) soloReportSubmitButton.disabled = true;
+    send({ type: "soloAction", action: "report", message });
   });
 }
 soloGuessedButton.addEventListener("click", () => send({ type: "soloAction", action: "answer", guessed: true }));
@@ -1792,6 +1822,53 @@ function renderAdminSoloStats() {
   });
 }
 
+function formatReportDate(value) {
+  const seconds = Number(value || 0);
+  if (!seconds) return "";
+  return new Date(seconds * 1000).toLocaleString("pl-PL");
+}
+
+function renderAdminReports() {
+  if (!adminReportList || !adminReportsCount || !profile || profile.role !== "moderator") return;
+  const reports = Array.isArray(state.soloReports) ? state.soloReports : [];
+  adminReportList.replaceChildren();
+  adminReportsCount.textContent = reports.length + " zgloszen";
+
+  if (!reports.length) {
+    adminReportList.append(node("p", "muted empty-row", "Brak zgloszen od graczy."));
+    return;
+  }
+
+  reports.forEach(function (report) {
+    const row = node("div", "admin-report-row tournament-card");
+    const meta = node("div", "track-meta admin-report-meta");
+    const date = formatReportDate(report.at);
+    const trackName = [report.anime, report.opening].filter(Boolean).join(" / ") || "Anime bez nazwy";
+    const detailParts = [
+      report.nickname || "Solo",
+      DIFFICULTY_LABELS[report.difficulty] || report.difficultyLabel || "Medium",
+      date
+    ].filter(Boolean);
+    meta.append(
+      node("b", "", trackName),
+      node("span", "", detailParts.join(" / ")),
+      node("p", "admin-report-message", report.message || "Brak opisu.")
+    );
+    if (report.sourceTitle) meta.append(node("span", "", report.sourceTitle));
+    const source = node("div", "admin-report-source");
+    source.append(node("span", "", report.videoId ? "YouTube" : "Audio"));
+    if (report.audioUrl) {
+      const link = node("a", "", "Link");
+      link.href = report.audioUrl;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      source.append(link);
+    }
+    row.append(meta, source);
+    adminReportList.append(row);
+  });
+}
+
 function renderTracks() {
   trackList.replaceChildren();
   trackCount.textContent = String(state.tracks.length);
@@ -1925,6 +2002,7 @@ function renderModerator() {
   renderBuzzDecision();
   renderAdminRooms();
   renderAdminSoloStats();
+  renderAdminReports();
 
   const settings = state.settings.difficultyScores || {};
   Object.keys(scoreInputs).forEach(function (key) {
@@ -1978,11 +2056,18 @@ function renderBuzzer() {
       lastSoloAnswerTrackId = state.currentTrackId || "";
       soloAnswerInput.value = "";
     }
+    if (soloReportInput && lastSoloReportTrackId !== state.currentTrackId) {
+      lastSoloReportTrackId = state.currentTrackId || "";
+      soloReportInput.value = "";
+      if (soloReportPanel) soloReportPanel.open = false;
+    }
     if (soloAnswerInput) {
       soloAnswerInput.disabled = !canAnswer;
       if (answered && state.solo && state.solo.answerText) soloAnswerInput.value = state.solo.answerText;
     }
     if (soloAnswerSubmitButton) soloAnswerSubmitButton.disabled = !canAnswer;
+    if (soloReportInput) soloReportInput.disabled = !state.currentTrack;
+    if (soloReportSubmitButton) soloReportSubmitButton.disabled = !state.currentTrack;
     soloGuessedButton.disabled = !canAnswer;
     soloMissedButton.disabled = !canAnswer;
     soloNextButton.disabled = !state.currentTrack || state.phase === "loading" || (!answered && !mediaError && (state.phase === "playing" || state.phase === "ended"));

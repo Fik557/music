@@ -59,7 +59,6 @@ const playSurface = $(".play-surface");
 const soloDayStreakCard = $("#soloDayStreakCard");
 const soloDayStreakValue = $("#soloDayStreakValue");
 const soloDayBestValue = $("#soloDayBestValue");
-const soloDayScoreValue = $("#soloDayScoreValue");
 const adminAnimeCard = $("#adminAnimeCard");
 const adminAnimeCover = $("#adminAnimeCover");
 const adminAnimeCoverFallback = $("#adminAnimeCoverFallback");
@@ -1578,7 +1577,6 @@ function renderSoloDayStreak() {
   soloDayStreakValue.textContent = String(streak);
   soloDayBestValue.textContent = champion.nickname || "Brak wyniku";
   soloDayBestValue.title = champion.nickname || "Brak wyniku";
-  soloDayScoreValue.textContent = "00:00-23:59";
   soloDayStreakCard.classList.toggle("is-hot", streak >= 3);
 }
 

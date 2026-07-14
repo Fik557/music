@@ -56,6 +56,10 @@ const leaveButton = $("#leaveButton");
 const appShell = $(".shell");
 const mainGrid = $("#mainGrid");
 const playSurface = $(".play-surface");
+const soloDayStreakCard = $("#soloDayStreakCard");
+const soloDayStreakValue = $("#soloDayStreakValue");
+const soloDayBestValue = $("#soloDayBestValue");
+const soloDayScoreValue = $("#soloDayScoreValue");
 const adminAnimeCard = $("#adminAnimeCard");
 const adminAnimeCover = $("#adminAnimeCover");
 const adminAnimeCoverFallback = $("#adminAnimeCoverFallback");
@@ -70,6 +74,8 @@ const scoreWindowLabel = $("#scoreWindowLabel");
 const soundButton = $("#soundButton");
 const buzzButton = $("#buzzButton");
 const buzzCaption = $("#buzzCaption");
+const soloPreroll = $("#soloPreroll");
+const soloPrerollValue = $("#soloPrerollValue");
 const soloControls = $("#soloControls");
 const soloAnswerForm = $("#soloAnswerForm");
 const soloAnswerInput = $("#soloAnswerInput");
@@ -216,6 +222,7 @@ let mediaLoadKey = "";
 let mediaLoadTimer = null;
 let mediaReadySentKey = "";
 let mediaErrorSentKey = "";
+let mobileAudioUnlocked = false;
 let latestSearchResults = [];
 let avatarData = "";
 let avatarCropSource = null;
@@ -923,10 +930,56 @@ copyLinkButton.addEventListener("click", async function () {
   }
 });
 
+function primeSongAudioFromGesture() {
+  unlockBuzzerSound();
+  audio.setAttribute("playsinline", "");
+  audio.setAttribute("webkit-playsinline", "");
+
+  const previousMuted = audio.muted;
+  let restored = false;
+  const restoreAudio = function () {
+    if (restored) return;
+    restored = true;
+    if (!state || state.phase !== "playing") audio.pause();
+    audio.muted = previousMuted;
+  };
+
+  try {
+    const attempt = audio.play();
+    if (attempt && typeof attempt.then === "function") {
+      attempt.then(function () {
+        mobileAudioUnlocked = true;
+        restoreAudio();
+      }).catch(restoreAudio);
+    } else {
+      mobileAudioUnlocked = true;
+      restoreAudio();
+    }
+  } catch (error) {
+    restoreAudio();
+  }
+  setTimeout(restoreAudio, 350);
+
+  try {
+    if (youtubePlayerReady && youtubePlayer && youtubePlayer.playVideo) {
+      if (youtubePlayer.mute) youtubePlayer.mute();
+      youtubePlayer.playVideo();
+      setTimeout(function () {
+        try {
+          if (!state || state.phase !== "playing") youtubePlayer.pauseVideo();
+          if (youtubePlayer.unMute) youtubePlayer.unMute();
+          youtubePlayer.setVolume(pageVolumePercent());
+        } catch (error) {}
+      }, 250);
+    }
+  } catch (error) {}
+}
+
 soundButton.addEventListener("click", function () {
   soundEnabled = true;
   soundButton.textContent = "Dzwiek wlaczony";
-  unlockBuzzerSound();
+  syncAudio(true);
+  primeSongAudioFromGesture();
   requestYouTubeApi();
   if (profile && profile.role === "solo" && state && state.solo && state.solo.mediaError) {
     send({ type: "soloAction", action: "next", autoplay: true });
@@ -937,15 +990,15 @@ soundButton.addEventListener("click", function () {
 });
 
 audio.addEventListener("loadeddata", function () {
-  if (state && state.phase === "loading") syncAudio(true);
+  if (state && (state.phase === "loading" || state.phase === "countdown")) syncAudio(true);
 });
 
 audio.addEventListener("canplay", function () {
-  if (state && state.phase === "loading") syncAudio(true);
+  if (state && (state.phase === "loading" || state.phase === "countdown")) syncAudio(true);
 });
 
 audio.addEventListener("seeked", function () {
-  if (state && state.phase === "loading") syncAudio(true);
+  if (state && (state.phase === "loading" || state.phase === "countdown")) syncAudio(true);
 });
 
 audio.addEventListener("error", function () {
@@ -996,14 +1049,19 @@ if (soloReportForm) {
 }
 soloGuessedButton.addEventListener("click", () => send({ type: "soloAction", action: "answer", guessed: true }));
 soloMissedButton.addEventListener("click", () => send({ type: "soloAction", action: "answer", guessed: false }));
-soloNextButton.addEventListener("click", () => send({ type: "soloAction", action: "next", autoplay: soundEnabled }));
+soloNextButton.addEventListener("click", function () {
+  if (soundEnabled) primeSongAudioFromGesture();
+  send({ type: "soloAction", action: "next", autoplay: soundEnabled });
+});
 if (soloRandomButton) {
   soloRandomButton.addEventListener("click", function () {
+    if (soundEnabled) primeSongAudioFromGesture();
     send({ type: "soloAction", action: "random", autoplay: soundEnabled });
   });
 }
 if (soloDailyButton) {
   soloDailyButton.addEventListener("click", function () {
+    if (soundEnabled) primeSongAudioFromGesture();
     send({ type: "soloAction", action: "daily", autoplay: soundEnabled });
   });
 }
@@ -1325,6 +1383,26 @@ function answerCountdownText(buzzer) {
   return Math.ceil(left) + " s na odpowiedz";
 }
 
+function soloPrerollLeft() {
+  if (!state || state.phase !== "countdown") return 0;
+  const localDelta = (Date.now() - lastStateAt) / 1000;
+  return Math.max(0, Number(state.countdownLeft || 0) - localDelta);
+}
+
+function renderSoloPreroll() {
+  if (!soloPreroll || !soloPrerollValue) return;
+  const visible = Boolean(profile && profile.role === "solo" && state && state.phase === "countdown");
+  soloPreroll.classList.toggle("hidden", !visible);
+  if (!visible) return;
+
+  const left = soloPrerollLeft();
+  const number = Math.max(1, Math.ceil(left));
+  const waitingForMedia = left <= 0 && !(state.solo && state.solo.mediaReady);
+  soloPrerollValue.textContent = waitingForMedia ? "..." : String(number);
+  soloPreroll.classList.toggle("waiting", waitingForMedia);
+  phaseLabel.textContent = waitingForMedia ? "ladowanie" : String(number);
+}
+
 function renderAnswerCountdown() {
   const isPlayer = profile && profile.role === "player";
   const isModerator = profile && profile.role === "moderator";
@@ -1358,7 +1436,9 @@ function render() {
   roomCodeLabel.textContent = state.code;
   renderTrackHeader();
   renderAdminAnimeCard();
+  renderSoloDayStreak();
   phaseLabel.textContent = phaseText(state.phase);
+  renderSoloPreroll();
   scoreWindowLabel.textContent = scoreWindowText();
   const soloProfileView = Boolean(profile && profile.role === "solo");
   peopleCount.textContent = soloProfileView ? "" : state.people.length + " osob";
@@ -1464,6 +1544,27 @@ function renderAdminAnimeCard() {
   if (adminAnimeCoverFallback) adminAnimeCoverFallback.textContent = coverFallbackText(track);
   if (adminAnimeName) adminAnimeName.textContent = track.anime || "Anime bez nazwy";
   if (adminAnimeDescription) adminAnimeDescription.textContent = track.description || "Brak opisu.";
+}
+
+function renderSoloDayStreak() {
+  if (!soloDayStreakCard || !mainGrid) return;
+  const show = Boolean(profile && profile.role === "solo");
+  soloDayStreakCard.classList.toggle("hidden", !show);
+  mainGrid.classList.toggle("solo-streak-visible", show);
+  if (appShell) appShell.classList.toggle("solo-streak-visible", show);
+  if (!show) return;
+
+  const soloState = state && state.solo ? state.solo : {};
+  const profileStats = state && state.soloProfile ? state.soloProfile : {};
+  const streak = Math.max(0, Number(profileStats.todayStreak || 0));
+  const todayBest = Math.max(streak, Math.max(0, Number(profileStats.todayBestStreak || 0)));
+  const todayGuessed = Math.max(0, Number(profileStats.todayGuessed || soloState.todayGuessed || 0));
+  const todayAttempts = Math.max(0, Number(profileStats.todayAttempts || soloState.todayAttempts || 0));
+
+  soloDayStreakValue.textContent = String(streak);
+  soloDayBestValue.textContent = String(todayBest);
+  soloDayScoreValue.textContent = todayGuessed + "/" + todayAttempts;
+  soloDayStreakCard.classList.toggle("is-hot", streak >= 3);
 }
 
 function playerPeople() {
@@ -2886,7 +2987,7 @@ function renderBuzzer() {
     if (soloReportSubmitButton) soloReportSubmitButton.disabled = !state.currentTrack;
     soloGuessedButton.disabled = !canAnswer;
     soloMissedButton.disabled = !canAnswer;
-    soloNextButton.disabled = !state.currentTrack || state.phase === "loading" || (!answered && !mediaError && (state.phase === "playing" || state.phase === "ended"));
+    soloNextButton.disabled = !state.currentTrack || state.phase === "loading" || state.phase === "countdown" || (!answered && !mediaError && (state.phase === "playing" || state.phase === "ended"));
 
     if (!state.currentTrack) {
       buzzCaption.textContent = "Brak openingow do losowania.";
@@ -2896,6 +2997,11 @@ function renderBuzzer() {
       buzzCaption.textContent = (state.solo.mediaErrorReason || "Opening nie zaladowal sie w 5 sekund.") + " Kliknij Nastepny.";
     } else if (state.phase === "loading") {
       buzzCaption.textContent = "Laduje opening przed startem czasu.";
+    } else if (state.phase === "countdown") {
+      const left = soloPrerollLeft();
+      buzzCaption.textContent = left <= 0 && !(state.solo && state.solo.mediaReady)
+        ? "Koncze ladowanie openingu. Czas gry jeszcze nie plynie."
+        : "Opening wystartuje po odliczaniu.";
     } else if (state.phase === "playing") {
       buzzCaption.textContent = "Sluchaj i zaznacz odpowiedz.";
     } else if (state.phase === "ended") {
@@ -2941,6 +3047,7 @@ function tick() {
   const currentElapsed = estimatedElapsed();
   const duration = state.settings.clipDuration || 15;
   renderTrackHeader();
+  renderSoloPreroll();
   progressFill.style.width = Math.min(100, (currentElapsed / duration) * 100) + "%";
   timeLabel.textContent = currentElapsed.toFixed(1) + " s";
   if (profile && profile.role === "solo") renderBuzzer();
@@ -2993,7 +3100,7 @@ function mediaLoadIdentity(track) {
 }
 
 function isSoloLoadingTrack(track) {
-  return Boolean(profile && profile.role === "solo" && state && state.phase === "loading" && state.currentTrack && track && state.currentTrack.id === track.id);
+  return Boolean(profile && profile.role === "solo" && state && (state.phase === "loading" || state.phase === "countdown") && state.currentTrack && track && state.currentTrack.id === track.id);
 }
 
 function clearMediaLoadTimer() {
@@ -3029,7 +3136,7 @@ function reportMediaReady(track) {
 function reportMediaError(track, reason) {
   if (!profile || profile.role !== "solo" || !state || !state.currentTrack || !track || state.currentTrack.id !== track.id) return;
   if (state.solo && state.solo.answered) return;
-  if (state.phase !== "loading" && state.phase !== "playing") return;
+  if (state.phase !== "loading" && state.phase !== "countdown" && state.phase !== "playing") return;
   const key = mediaLoadIdentity(track);
   if (mediaErrorSentKey === key) return;
   mediaErrorSentKey = key;
@@ -3048,7 +3155,7 @@ function syncAudio(force) {
   }
 
   let track = state.currentTrack;
-  if (!(profile && profile.role === "solo" && state.phase === "loading")) {
+  if (!isSoloLoadingTrack(track)) {
     clearMediaLoadTimer();
   }
   const clipElapsed = estimatedElapsed();
@@ -3294,6 +3401,7 @@ function phaseText(phase) {
   return {
     idle: "gotowe",
     loading: "ladowanie",
+    countdown: "3",
     playing: "gra",
     paused: "pauza",
     ended: "koniec"

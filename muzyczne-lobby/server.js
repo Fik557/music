@@ -24,6 +24,7 @@ const rooms = new Map();
 const sockets = new Map();
 const soloStreaks = new Map();
 const animeTitleLookupCache = new Map();
+let lastSoloDayKey = "";
 const ANSWER_TIME_LIMIT = 15;
 const SOLO_CLIP_DURATION = 15;
 const SOLO_SEGMENT_SPLIT = 7.5;
@@ -844,6 +845,41 @@ function publicSoloLeaderboard() {
     if (b.guessed !== a.guessed) return b.guessed - a.guessed;
     return a.nickname.localeCompare(b.nickname);
   }).slice(0, 30);
+}
+
+function publicSoloDayChampion() {
+  const currentDayKey = dayKey(now());
+  const players = Object.keys(soloPlayersStore()).map(function (clientId) {
+    const entry = soloPlayersStore()[clientId] || {};
+    if (entry.todayKey !== currentDayKey) return null;
+    return {
+      nickname: cleanText(entry.nickname, "Solo", 60),
+      avatar: cleanAvatar(entry.avatar),
+      streak: Math.max(0, Number(entry.todayBestStreak || 0)),
+      currentStreak: Math.max(0, Number(entry.todayStreak || 0)),
+      guessed: Math.max(0, Number(entry.todayGuessed || 0)),
+      attempts: Math.max(0, Number(entry.todayAttempts || 0)),
+      dayKey: currentDayKey
+    };
+  }).filter(function (entry) {
+    return entry && entry.streak > 0;
+  }).sort(function (a, b) {
+    if (b.streak !== a.streak) return b.streak - a.streak;
+    if (b.currentStreak !== a.currentStreak) return b.currentStreak - a.currentStreak;
+    if (b.guessed !== a.guessed) return b.guessed - a.guessed;
+    if (a.attempts !== b.attempts) return a.attempts - b.attempts;
+    return a.nickname.localeCompare(b.nickname);
+  });
+
+  return players[0] || {
+    nickname: "",
+    avatar: "",
+    streak: 0,
+    currentStreak: 0,
+    guessed: 0,
+    attempts: 0,
+    dayKey: currentDayKey
+  };
 }
 
 function soloTrackKey(track) {
@@ -2643,6 +2679,7 @@ function publicSoloState(socket) {
   addChangedStateField(roomState, socket, scope, "blockedIps", []);
   addChangedStateField(roomState, socket, scope, "soloDaily", dailySummary);
   addChangedStateField(roomState, socket, scope, "soloProfile", soloProfile);
+  addChangedStateField(roomState, socket, scope, "soloDayChampion", publicSoloDayChampion());
   addChangedStateField(roomState, socket, scope, "soloLeaderboard", publicSoloLeaderboard());
   addChangedStateField(roomState, socket, scope, "dailySoloLeaderboard", dailyLeaderboard);
   addChangedStateField(roomState, socket, scope, "soloStats", []);
@@ -2656,6 +2693,12 @@ function publicSoloState(socket) {
 
 function sendSoloState(socket) {
   send(socket, publicSoloState(socket));
+}
+
+function broadcastSoloStates() {
+  sockets.forEach(function (socket) {
+    if (socket.role === "solo" && socket.joined && !socket.closed) sendSoloState(socket);
+  });
 }
 
 function startSoloRound(socket, autoplay) {
@@ -2868,7 +2911,7 @@ function recordSoloAnswer(socket, guessed, answerText) {
   }
 
   savePersistedRooms();
-  sendSoloState(socket);
+  broadcastSoloStates();
   broadcastModeratorStats();
 }
 
@@ -4353,6 +4396,11 @@ setInterval(function () {
 }, 250);
 
 setInterval(function () {
+  const currentDayKey = dayKey(now());
+  if (currentDayKey !== lastSoloDayKey) {
+    lastSoloDayKey = currentDayKey;
+    broadcastSoloStates();
+  }
   rooms.forEach(function (room) {
     if (hasJoinedClients(room)) broadcast(room);
   });

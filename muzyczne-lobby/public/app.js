@@ -166,6 +166,8 @@ const adminRoomList = $("#adminRoomList");
 const adminRoomsCount = $("#adminRoomsCount");
 const adminReportList = $("#adminReportList");
 const adminReportsCount = $("#adminReportsCount");
+const adminReportSearchInput = $("#adminReportSearchInput");
+const adminReportSortInput = $("#adminReportSortInput");
 const adminCenterPhase = $("#adminCenterPhase");
 const adminCenterGrid = $("#adminCenterGrid");
 const adminSoloPlayersList = $("#adminSoloPlayersList");
@@ -232,6 +234,8 @@ let activeAdminPanel = "center";
 let lastSoloAnswerTrackId = "";
 let lastSoloReportTrackId = "";
 let adminStatsSort = "desc";
+let adminReportSearch = "";
+let adminReportSort = "newest";
 let librarySearch = "";
 let libraryDifficulty = "all";
 let libraryPercent = "all";
@@ -1093,6 +1097,20 @@ if (statsSortHardestButton) {
   statsSortHardestButton.addEventListener("click", function () {
     adminStatsSort = "hardest";
     renderAdminSoloStats();
+  });
+}
+
+if (adminReportSearchInput) {
+  adminReportSearchInput.addEventListener("input", function () {
+    adminReportSearch = adminReportSearchInput.value || "";
+    renderAdminReports();
+  });
+}
+
+if (adminReportSortInput) {
+  adminReportSortInput.addEventListener("change", function () {
+    adminReportSort = adminReportSortInput.value || "newest";
+    renderAdminReports();
   });
 }
 
@@ -2700,15 +2718,43 @@ function formatReportDate(value) {
 function renderAdminReports() {
   if (!adminReportList || !adminReportsCount || !profile || profile.role !== "moderator") return;
   const reports = Array.isArray(state.soloReports) ? state.soloReports : [];
+  const search = normalizeAnswerText(adminReportSearch);
+  const visibleReports = reports.filter(function (report) {
+    if (!search) return true;
+    return normalizeAnswerText([
+      report.anime,
+      report.opening,
+      report.nickname,
+      report.message,
+      report.sourceTitle,
+      report.difficultyLabel
+    ].filter(Boolean).join(" ")).includes(search);
+  }).sort(function (a, b) {
+    if (adminReportSort === "newest") return Number(b.at || 0) - Number(a.at || 0);
+    const aName = normalizeAnswerText([a.anime, a.opening].filter(Boolean).join(" ")) || "anime bez nazwy";
+    const bName = normalizeAnswerText([b.anime, b.opening].filter(Boolean).join(" ")) || "anime bez nazwy";
+    const compared = aName.localeCompare(bName, "pl");
+    if (compared !== 0) return adminReportSort === "za" ? -compared : compared;
+    return Number(b.at || 0) - Number(a.at || 0);
+  });
   adminReportList.replaceChildren();
-  adminReportsCount.textContent = reports.length + " zgloszen";
+  adminReportsCount.textContent = visibleReports.length === reports.length
+    ? reports.length + " zgloszen"
+    : visibleReports.length + " z " + reports.length;
+  if (adminReportSearchInput && adminReportSearchInput.value !== adminReportSearch) adminReportSearchInput.value = adminReportSearch;
+  if (adminReportSortInput && adminReportSortInput.value !== adminReportSort) adminReportSortInput.value = adminReportSort;
 
   if (!reports.length) {
     adminReportList.append(node("p", "muted empty-row", "Brak zgloszen od graczy."));
     return;
   }
 
-  reports.forEach(function (report) {
+  if (!visibleReports.length) {
+    adminReportList.append(node("p", "muted empty-row", "Brak zgloszen pasujacych do wyszukiwania."));
+    return;
+  }
+
+  visibleReports.forEach(function (report) {
     const row = node("div", "admin-report-row tournament-card");
     const meta = node("div", "track-meta admin-report-meta");
     const date = formatReportDate(report.at);

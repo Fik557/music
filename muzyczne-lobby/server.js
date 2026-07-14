@@ -14,9 +14,12 @@ const DB_FILE = path.join(DATA_DIR, "anime-opening-quiz.sqlite");
 const AUTO_BACKUP_DIR = path.join(DATA_DIR, "backups");
 const SEED_DATA_FILE = path.join(__dirname, "data", "rooms.json");
 let sqliteDb = null;
+let postgresPool = null;
+let postgresPendingState = "";
+let postgresSavePromise = null;
 let persistenceBackend = { type: "json", label: "JSON", file: DATA_FILE };
 let lastAutoBackupAt = 0;
-const persistedRoomConfigs = loadPersistedRooms();
+const persistedRoomConfigs = {};
 const rooms = new Map();
 const sockets = new Map();
 const soloStreaks = new Map();
@@ -328,6 +331,30 @@ function openSqlitePersistence() {
   }
 }
 
+async function openPostgresPersistence() {
+  const connectionString = rawEnv("DATABASE_URL", "");
+  if (!connectionString) return null;
+  if (postgresPool) return postgresPool;
+
+  const { Pool } = require("pg");
+  postgresPool = new Pool({
+    connectionString: connectionString,
+    max: 2,
+    connectionTimeoutMillis: 10000,
+    idleTimeoutMillis: 30000,
+    allowExitOnIdle: true
+  });
+  postgresPool.on("error", function (error) {
+    persistenceBackend.warning = rawText(error && error.message, 160);
+    console.warn("Blad polaczenia PostgreSQL:", error.message);
+  });
+  await postgresPool.query(
+    "CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
+  );
+  persistenceBackend = { type: "postgres", label: "PostgreSQL", file: "" };
+  return postgresPool;
+}
+
 function parsePersistedJson(text) {
   return JSON.parse(String(text || "{}").replace(/^\uFEFF/, "")) || {};
 }
@@ -370,6 +397,78 @@ function loadPersistedRooms() {
   return {};
 }
 
+async function initializePersistence() {
+  let loaded = null;
+  try {
+    const pool = await openPostgresPersistence();
+    if (pool) {
+      const result = await pool.query("SELECT value FROM app_state WHERE key = $1", ["rooms"]);
+      if (result.rows[0] && result.rows[0].value) {
+        loaded = typeof result.rows[0].value === "string"
+          ? parsePersistedJson(result.rows[0].value)
+          : result.rows[0].value;
+      }
+    }
+  } catch (error) {
+    console.warn("Nie udalo sie uruchomic PostgreSQL:", error.message);
+    if (postgresPool) {
+      try { await postgresPool.end(); } catch (closeError) {}
+    }
+    postgresPool = null;
+    persistenceBackend = {
+      type: "json",
+      label: "JSON (tryb awaryjny)",
+      file: DATA_FILE,
+      warning: rawText(error && error.message, 160)
+    };
+    if (rawEnv("DATABASE_URL", "")) throw error;
+  }
+
+  if (!loaded) {
+    loaded = loadPersistedRooms();
+    if (postgresPool) persistenceBackend = { type: "postgres", label: "PostgreSQL", file: "" };
+  }
+  Object.keys(loaded || {}).forEach(function (key) {
+    persistedRoomConfigs[key] = loaded[key];
+  });
+
+  if (postgresPool && !(await postgresPool.query("SELECT 1 FROM app_state WHERE key = $1", ["rooms"])).rowCount) {
+    await postgresPool.query(
+      "INSERT INTO app_state (key, value, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+      ["rooms", JSON.stringify(persistedRoomConfigs)]
+    );
+  }
+}
+
+function queuePostgresSave(jsonText) {
+  if (!postgresPool) return;
+  postgresPendingState = jsonText;
+  if (postgresSavePromise) return;
+
+  let failedState = "";
+  postgresSavePromise = (async function () {
+    while (postgresPendingState) {
+      const nextState = postgresPendingState;
+      failedState = nextState;
+      postgresPendingState = "";
+      await postgresPool.query(
+        "INSERT INTO app_state (key, value, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+        ["rooms", nextState]
+      );
+    }
+    persistenceBackend.warning = "";
+  })().catch(function (error) {
+    if (!postgresPendingState) postgresPendingState = failedState || jsonText;
+    persistenceBackend.warning = rawText(error && error.message, 160);
+    console.warn("Nie udalo sie zapisac PostgreSQL:", error.message);
+    setTimeout(function () {
+      if (postgresPendingState && !postgresSavePromise) queuePostgresSave(postgresPendingState);
+    }, 2000);
+  }).finally(function () {
+    postgresSavePromise = null;
+  });
+}
+
 function writeAutoBackup(jsonText) {
   const current = now();
   if (current - lastAutoBackupAt < 600) return;
@@ -391,8 +490,13 @@ function writeAutoBackup(jsonText) {
 
 function savePersistedRooms() {
   try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
     const jsonText = JSON.stringify(persistedRoomConfigs, null, 2);
+    if (postgresPool) {
+      queuePostgresSave(jsonText);
+      if (rawEnv("WRITE_LOCAL_BACKUP", "") !== "1") return;
+    }
+
+    fs.mkdirSync(DATA_DIR, { recursive: true });
     const db = openSqlitePersistence();
     if (db) {
       db.prepare("INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
@@ -414,7 +518,7 @@ function publicPersistenceInfo() {
     label: persistenceBackend.label,
     file: persistenceBackend.file,
     warning: persistenceBackend.warning || "",
-    autoBackups: true
+    autoBackups: !postgresPool || rawEnv("WRITE_LOCAL_BACKUP", "") === "1"
   };
 }
 
@@ -2315,43 +2419,56 @@ function publicBuzzer(room) {
   });
 }
 
+function addChangedStateField(target, socket, scope, key, value) {
+  if (!socket.stateFieldSignatures) socket.stateFieldSignatures = Object.create(null);
+  const serialized = JSON.stringify(value);
+  const signature = crypto.createHash("sha1").update(serialized === undefined ? "undefined" : serialized).digest("base64");
+  const cacheKey = scope + "|" + key;
+  if (socket.stateFieldSignatures[cacheKey] === signature) return;
+  socket.stateFieldSignatures[cacheKey] = signature;
+  target[key] = value;
+}
+
 function publicRoom(room, socket) {
   const isModerator = socket.role === "moderator";
   const roundClosed = isRoundClosed(room);
+  const scope = "room:" + room.code + ":" + socket.role;
+  const roomState = {
+    code: room.code,
+    phase: room.phase,
+    startedAt: room.startedAt,
+    offset: elapsed(room),
+    revealed: roundClosed,
+    roundClosed: roundClosed,
+    currentTrackId: room.currentTrackId
+  };
+
+  addChangedStateField(roomState, socket, scope, "lockedGroups", Object.keys(room.lockedGroups).filter(function (groupName) {
+    return room.lockedGroups[groupName];
+  }));
+  addChangedStateField(roomState, socket, scope, "tracks", isModerator ? room.tracks : []);
+  addChangedStateField(roomState, socket, scope, "libraryTracks", isModerator ? room.libraryTracks : []);
+  addChangedStateField(roomState, socket, scope, "currentTrack", visibleTrack(currentTrack(room), socket, room));
+  addChangedStateField(roomState, socket, scope, "currentBuzzer", publicBuzzer(room));
+  addChangedStateField(roomState, socket, scope, "teams", groupScores(room));
+  addChangedStateField(roomState, socket, scope, "groups", publicGroups(room));
+  addChangedStateField(roomState, socket, scope, "settings", room.settings);
+  addChangedStateField(roomState, socket, scope, "difficulties", DIFFICULTIES);
+  addChangedStateField(roomState, socket, scope, "qualityStatuses", QUALITY_STATUSES);
+  addChangedStateField(roomState, socket, scope, "people", peopleForRoom(room, isModerator));
+  addChangedStateField(roomState, socket, scope, "blockedIps", isModerator ? publicBlockedIps(room) : []);
+  addChangedStateField(roomState, socket, scope, "localAudioFiles", isModerator ? listLocalAudioFiles() : []);
+  addChangedStateField(roomState, socket, scope, "soloStats", isModerator ? publicSoloStats(room.currentTrackId ? soloTrackKey(currentTrack(room) || {}) : "") : []);
+  addChangedStateField(roomState, socket, scope, "soloReports", isModerator ? publicSoloReports() : []);
+  addChangedStateField(roomState, socket, scope, "soloLeaderboard", isModerator ? publicSoloLeaderboard() : []);
+  addChangedStateField(roomState, socket, scope, "dailySoloLeaderboard", isModerator ? publicDailySoloLeaderboard(dayKey(now())) : []);
+  addChangedStateField(roomState, socket, scope, "persistence", isModerator ? publicPersistenceInfo() : null);
+  addChangedStateField(roomState, socket, scope, "adminRooms", isModerator ? publicAdminRooms(room.code) : []);
 
   return {
     type: "state",
     serverNow: now(),
-    room: {
-      code: room.code,
-      phase: room.phase,
-      startedAt: room.startedAt,
-      offset: elapsed(room),
-      revealed: roundClosed,
-      roundClosed: roundClosed,
-      lockedGroups: Object.keys(room.lockedGroups).filter(function (groupName) {
-        return room.lockedGroups[groupName];
-      }),
-      tracks: isModerator ? room.tracks : [],
-      libraryTracks: isModerator ? room.libraryTracks : [],
-      currentTrackId: room.currentTrackId,
-      currentTrack: visibleTrack(currentTrack(room), socket, room),
-      currentBuzzer: publicBuzzer(room),
-      teams: groupScores(room),
-      groups: publicGroups(room),
-      settings: room.settings,
-      difficulties: DIFFICULTIES,
-      qualityStatuses: QUALITY_STATUSES,
-      people: peopleForRoom(room, isModerator),
-      blockedIps: isModerator ? publicBlockedIps(room) : [],
-      localAudioFiles: isModerator ? listLocalAudioFiles() : [],
-      soloStats: isModerator ? publicSoloStats(room.currentTrackId ? soloTrackKey(currentTrack(room) || {}) : "") : [],
-      soloReports: isModerator ? publicSoloReports() : [],
-      soloLeaderboard: isModerator ? publicSoloLeaderboard() : [],
-      dailySoloLeaderboard: isModerator ? publicDailySoloLeaderboard(dayKey(now())) : [],
-      persistence: isModerator ? publicPersistenceInfo() : null,
-      adminRooms: isModerator ? publicAdminRooms(room.code) : []
-    }
+    room: roomState
   };
 }
 
@@ -2442,51 +2559,58 @@ function publicSoloState(socket) {
   const trackKey = session && session.track ? soloTrackKey(session.track) : "";
   const soloProfile = publicSoloProfile(socket);
   const dailySolo = publicDailySoloForSocket(socket);
+  const dailyLeaderboard = dailySolo.leaderboard;
+  const dailySummary = Object.assign({}, dailySolo);
+  delete dailySummary.leaderboard;
+  const scope = "solo:" + rawText(socket.clientId || socket.id, 100);
+  const roomState = {
+    code: "SOLO",
+    phase: session ? session.phase : "idle",
+    startedAt: session ? session.startedAt : 0,
+    offset: soloElapsed(socket),
+    revealed: Boolean(session && (session.revealed || session.answered)),
+    roundClosed: Boolean(session && session.answered),
+    currentTrackId: trackKey,
+    mediaToken: session ? trackKey + "|" + String(session.loadingStartedAt || session.startedAt || 0) : "",
+    solo: {
+      answered: Boolean(session && session.answered),
+      guessed: session && session.answered ? Boolean(session.guessed) : null,
+      answerText: session && session.answered ? rawText(session.answerText, 180) : "",
+      streak: soloProfile ? soloProfile.streak : Math.max(0, Number(socket.soloStreak || 0)),
+      bestStreak: soloProfile ? soloProfile.bestStreak : Math.max(0, Number(socket.soloStreak || 0)),
+      todayAttempts: soloProfile ? soloProfile.todayAttempts : 0,
+      todayGuessed: soloProfile ? soloProfile.todayGuessed : 0,
+      mediaError: Boolean(session && session.mediaError),
+      mediaErrorReason: session && session.mediaError ? rawText(session.mediaErrorReason, 160) : ""
+    }
+  };
+
+  addChangedStateField(roomState, socket, scope, "lockedGroups", []);
+  addChangedStateField(roomState, socket, scope, "tracks", []);
+  addChangedStateField(roomState, socket, scope, "libraryTracks", []);
+  addChangedStateField(roomState, socket, scope, "currentTrack", visibleSoloTrack(session));
+  addChangedStateField(roomState, socket, scope, "currentBuzzer", null);
+  addChangedStateField(roomState, socket, scope, "teams", {});
+  addChangedStateField(roomState, socket, scope, "groups", []);
+  addChangedStateField(roomState, socket, scope, "settings", {
+    clipDuration: SOLO_CLIP_DURATION,
+    segmentSplit: SOLO_SEGMENT_SPLIT,
+    difficultyScores: cloneScores(DEFAULT_DIFFICULTY_SCORES)
+  });
+  addChangedStateField(roomState, socket, scope, "difficulties", DIFFICULTIES);
+  addChangedStateField(roomState, socket, scope, "qualityStatuses", QUALITY_STATUSES);
+  addChangedStateField(roomState, socket, scope, "people", []);
+  addChangedStateField(roomState, socket, scope, "blockedIps", []);
+  addChangedStateField(roomState, socket, scope, "soloDaily", dailySummary);
+  addChangedStateField(roomState, socket, scope, "soloProfile", soloProfile);
+  addChangedStateField(roomState, socket, scope, "soloLeaderboard", publicSoloLeaderboard());
+  addChangedStateField(roomState, socket, scope, "dailySoloLeaderboard", dailyLeaderboard);
+  addChangedStateField(roomState, socket, scope, "soloStats", []);
+  addChangedStateField(roomState, socket, scope, "soloTitleOptions", publicSoloTitleOptions());
+
   return {
     type: "soloState",
-    room: {
-      code: "SOLO",
-      phase: session ? session.phase : "idle",
-      startedAt: session ? session.startedAt : 0,
-      offset: soloElapsed(socket),
-      revealed: Boolean(session && (session.revealed || session.answered)),
-      roundClosed: Boolean(session && session.answered),
-      lockedGroups: [],
-      tracks: [],
-      libraryTracks: [],
-      currentTrackId: trackKey,
-      mediaToken: session ? trackKey + "|" + String(session.loadingStartedAt || session.startedAt || 0) : "",
-      currentTrack: visibleSoloTrack(session),
-      currentBuzzer: null,
-      teams: {},
-      groups: [],
-      settings: {
-        clipDuration: SOLO_CLIP_DURATION,
-        segmentSplit: SOLO_SEGMENT_SPLIT,
-        difficultyScores: cloneScores(DEFAULT_DIFFICULTY_SCORES)
-      },
-      difficulties: DIFFICULTIES,
-      qualityStatuses: QUALITY_STATUSES,
-      people: [],
-      blockedIps: [],
-      solo: {
-        answered: Boolean(session && session.answered),
-        guessed: session && session.answered ? Boolean(session.guessed) : null,
-        answerText: session && session.answered ? rawText(session.answerText, 180) : "",
-        streak: soloProfile ? soloProfile.streak : Math.max(0, Number(socket.soloStreak || 0)),
-        bestStreak: soloProfile ? soloProfile.bestStreak : Math.max(0, Number(socket.soloStreak || 0)),
-        todayAttempts: soloProfile ? soloProfile.todayAttempts : 0,
-        todayGuessed: soloProfile ? soloProfile.todayGuessed : 0,
-        mediaError: Boolean(session && session.mediaError),
-        mediaErrorReason: session && session.mediaError ? rawText(session.mediaErrorReason, 160) : ""
-      },
-      soloDaily: dailySolo,
-      soloProfile: soloProfile,
-      soloLeaderboard: publicSoloLeaderboard(),
-      dailySoloLeaderboard: dailySolo.leaderboard,
-      soloStats: [],
-      soloTitleOptions: publicSoloTitleOptions()
-    }
+    room: roomState
   };
 }
 
@@ -3749,10 +3873,40 @@ function contentType(filePath) {
 
 function cacheControl(filePath) {
   const extension = path.extname(filePath).toLowerCase();
-  if ([".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".webp", ".svg", ".webmanifest"].includes(extension)) {
-    return "no-store";
+  if (extension === ".html" || path.basename(filePath).toLowerCase() === "sw.js") {
+    return "no-cache";
   }
-  return "public, max-age=3600";
+  if ([".css", ".js", ".webmanifest"].includes(extension)) {
+    return "public, max-age=3600, stale-while-revalidate=86400";
+  }
+  if ([".png", ".jpg", ".jpeg", ".webp", ".svg", ".mp3", ".wav", ".ogg", ".m4a"].includes(extension)) {
+    return "public, max-age=604800, stale-while-revalidate=86400";
+  }
+  return "public, max-age=3600, stale-while-revalidate=86400";
+}
+
+function isAudioFile(filePath) {
+  return [".mp3", ".wav", ".ogg", ".m4a"].includes(path.extname(filePath).toLowerCase());
+}
+
+function parseByteRange(value, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(value || "").trim());
+  if (!match) return null;
+
+  let start = match[1] ? Number(match[1]) : null;
+  let end = match[2] ? Number(match[2]) : null;
+  if (start === null && end === null) return null;
+
+  if (start === null) {
+    const suffixLength = Math.min(size, end);
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    end = end === null ? size - 1 : Math.min(end, size - 1);
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start > end || start >= size) return null;
+  return { start: Math.floor(start), end: Math.floor(end) };
 }
 
 function sendJson(res, status, payload) {
@@ -3901,6 +4055,13 @@ function handleAudioUploadRequest(req, res) {
 
 function serve(req, res) {
   const requestUrl = new URL(req.url, "http://" + (req.headers.host || "localhost"));
+  if (requestUrl.pathname === "/api/health") {
+    return sendJson(res, 200, {
+      ok: true,
+      persistence: persistenceBackend.type,
+      uptime: Math.floor(process.uptime())
+    });
+  }
   if (requestUrl.pathname === "/api/upload-audio") return handleAudioUploadRequest(req, res);
   if (requestUrl.pathname === "/api/export-data") return handleDataExportRequest(req, res, requestUrl);
   if (requestUrl.pathname === "/api/import-data") return handleDataImportRequest(req, res);
@@ -3916,17 +4077,48 @@ function serve(req, res) {
     return;
   }
 
-  fs.readFile(filePath, function (error, data) {
-    if (error) {
+  fs.stat(filePath, function (error, stat) {
+    if (error || !stat.isFile()) {
       res.writeHead(404);
       res.end("Not found");
       return;
     }
-    res.writeHead(200, {
+
+    const etag = 'W/"' + stat.size + "-" + Math.floor(stat.mtimeMs) + '"';
+    const headers = {
       "Content-Type": contentType(filePath),
-      "Cache-Control": cacheControl(filePath)
-    });
-    res.end(data);
+      "Cache-Control": cacheControl(filePath),
+      "ETag": etag,
+      "Last-Modified": stat.mtime.toUTCString()
+    };
+
+    if (req.headers["if-none-match"] === etag) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+
+    const requestedRange = isAudioFile(filePath) ? parseByteRange(req.headers.range, stat.size) : null;
+    if (req.headers.range && isAudioFile(filePath) && !requestedRange) {
+      res.writeHead(416, Object.assign(headers, { "Content-Range": "bytes */" + stat.size }));
+      res.end();
+      return;
+    }
+
+    if (isAudioFile(filePath)) headers["Accept-Ranges"] = "bytes";
+    if (requestedRange) {
+      headers["Content-Range"] = "bytes " + requestedRange.start + "-" + requestedRange.end + "/" + stat.size;
+      headers["Content-Length"] = requestedRange.end - requestedRange.start + 1;
+      res.writeHead(206, headers);
+      if (req.method === "HEAD") return res.end();
+      fs.createReadStream(filePath, requestedRange).pipe(res);
+      return;
+    }
+
+    headers["Content-Length"] = stat.size;
+    res.writeHead(200, headers);
+    if (req.method === "HEAD") return res.end();
+    fs.createReadStream(filePath).pipe(res);
   });
 }
 
@@ -4100,8 +4292,39 @@ setInterval(function () {
   });
 }, 1000);
 
-server.listen(PORT, function () {
+const serverReady = initializePersistence().then(function () {
+  return new Promise(function (resolve, reject) {
+    server.once("error", reject);
+    server.listen(PORT, function () {
   console.log("Anime Opening Quiz działa na http://localhost:" + PORT);
+      resolve(server);
+    });
+  });
+}).catch(function (error) {
+  console.error("Nie udalo sie uruchomic serwera:", error);
+  process.exitCode = 1;
+  throw error;
+});
+
+async function closeServer() {
+  await new Promise(function (resolve) {
+    if (!server.listening) return resolve();
+    server.close(resolve);
+  });
+  if (postgresSavePromise) {
+    try { await postgresSavePromise; } catch (error) {}
+  }
+  if (postgresPool) {
+    try { await postgresPool.end(); } catch (error) {}
+  }
+}
+
+process.once("SIGTERM", function () {
+  closeServer().finally(function () { process.exit(0); });
+});
+process.once("SIGINT", function () {
+  closeServer().finally(function () { process.exit(0); });
 });
 
 module.exports = server;
+module.exports.ready = serverReady;

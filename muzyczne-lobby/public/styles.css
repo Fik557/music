@@ -1499,6 +1499,19 @@ h2 {
   align-items: start;
 }
 
+.report-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 240px);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.report-toolbar input,
+.report-toolbar select {
+  width: 100%;
+  min-height: 44px;
+}
+
 .admin-report-message {
   width: 100%;
   margin: 6px 0 0;
@@ -3242,6 +3255,10 @@ body[data-phase="ended"] .phase-pill {
   }
 
   .solo-answer-form {
+    grid-template-columns: 1fr;
+  }
+
+  .report-toolbar {
     grid-template-columns: 1fr;
   }
 

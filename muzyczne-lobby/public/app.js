@@ -1,6 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
 
-const MODERATOR_PASSWORD = "Kochamkotki";
 const SESSION_KEY = "animeOpeningQuizSession";
 const PAGE_VOLUME_KEY = "animeOpeningQuizVolume";
 const MAX_AVATAR_DATA_LENGTH = 60000;
@@ -79,6 +78,8 @@ const soloAnswerOptions = $("#soloAnswerOptions");
 const soloGuessedButton = $("#soloGuessedButton");
 const soloMissedButton = $("#soloMissedButton");
 const soloNextButton = $("#soloNextButton");
+const soloRandomButton = $("#soloRandomButton");
+const soloDailyButton = $("#soloDailyButton");
 const soloReportPanel = $("#soloReportPanel");
 const soloReportForm = $("#soloReportForm");
 const soloReportInput = $("#soloReportInput");
@@ -108,6 +109,7 @@ const audioUploadButton = $("#audioUploadButton");
 const audioUploadStatus = $("#audioUploadStatus");
 const trackCoverInput = $("#trackCoverInput");
 const trackDescriptionInput = $("#trackDescriptionInput");
+const trackAliasesInput = $("#trackAliasesInput");
 const trackSubmitButton = $("#trackSubmitButton");
 const cancelEditButton = $("#cancelEditButton");
 const trackList = $("#trackList");
@@ -173,6 +175,12 @@ const scoreInputs = {
   hard: { first: $("#scoreHardFirst"), second: $("#scoreHardSecond") },
   impossible: { first: $("#scoreImpossibleFirst"), second: $("#scoreImpossibleSecond") }
 };
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("/sw.js").catch(function () {});
+  });
+}
 
 let socket = null;
 let state = null;
@@ -746,11 +754,6 @@ function join(role) {
   const groupPassword = playMode === "solo" ? "" : groupPasswordInput.value.trim();
   const moderatorPassword = moderatorPasswordInput.value.trim();
 
-  if (role === "moderator" && moderatorPassword !== MODERATOR_PASSWORD) {
-    showToast("Wpisz poprawne haslo administratora.");
-    return;
-  }
-
   if (role === "player" && playMode !== "solo") {
     if (!team) return showToast("Wpisz nazwe grupy.");
     if (!groupPassword) return showToast("Wpisz haslo grupy.");
@@ -932,6 +935,16 @@ if (soloReportForm) {
 soloGuessedButton.addEventListener("click", () => send({ type: "soloAction", action: "answer", guessed: true }));
 soloMissedButton.addEventListener("click", () => send({ type: "soloAction", action: "answer", guessed: false }));
 soloNextButton.addEventListener("click", () => send({ type: "soloAction", action: "next", autoplay: soundEnabled }));
+if (soloRandomButton) {
+  soloRandomButton.addEventListener("click", function () {
+    send({ type: "soloAction", action: "random", autoplay: soundEnabled });
+  });
+}
+if (soloDailyButton) {
+  soloDailyButton.addEventListener("click", function () {
+    send({ type: "soloAction", action: "daily", autoplay: soundEnabled });
+  });
+}
 
 if (adminPanelTabs) {
   adminPanelTabs.addEventListener("click", function (event) {
@@ -1036,7 +1049,8 @@ trackForm.addEventListener("submit", function (event) {
       startAtFirst: Number(trackStartFirstInput.value || 0),
       startAtSecond: Number(trackStartSecondInput.value || 5),
       coverUrl: trackCoverInput.value,
-      description: trackDescriptionInput.value
+      description: trackDescriptionInput.value,
+      aliases: trackAliasesInput ? trackAliasesInput.value : ""
     }
   };
 
@@ -1395,9 +1409,15 @@ function renderSoloPracticeScore() {
   const track = state.currentTrack;
   const soloState = state.solo || {};
   const profileStats = state.soloProfile || {};
+  const daily = state.soloDaily || {};
+  if (soloRandomButton) soloRandomButton.classList.toggle("active", !daily.active);
+  if (soloDailyButton) soloDailyButton.classList.toggle("active", Boolean(daily.active));
 
   if (!track) {
-    scoreboard.append(node("p", "muted empty-row", "Brak openingow do losowania."));
+    const message = daily.active && daily.completed
+      ? "Daily 10 ukonczone na dzisiaj."
+      : "Brak openingow do losowania.";
+    scoreboard.append(node("p", "muted empty-row", message));
     return;
   }
 
@@ -1430,6 +1450,19 @@ function renderSoloPracticeScore() {
   bestValue.append(node("strong", "", String(Number(profileStats.bestStreak || soloState.bestStreak || streak || 0))));
   bestRow.append(bestMeta, bestValue);
   scoreboard.append(bestRow);
+
+  if (daily.active) {
+    const dailyRow = node("div", "score-row tournament-card solo-score-row daily-score-row");
+    const dailyMeta = node("div", "person-meta score-meta");
+    dailyMeta.append(
+      node("b", "", "Daily 10"),
+      node("span", "", Number(daily.guessed || 0) + "/" + Number(daily.attempts || 0) + " / zostalo: " + Number(daily.remaining || 0))
+    );
+    const dailyValue = node("div", "score-value");
+    dailyValue.append(node("strong", "", String(Number(daily.total || 0))));
+    dailyRow.append(dailyMeta, dailyValue);
+    scoreboard.append(dailyRow);
+  }
 
   const history = Array.isArray(profileStats.history) ? profileStats.history.slice(0, 4) : [];
   if (history.length) {
@@ -1766,6 +1799,7 @@ function editStatTrack(entry) {
     trackId: entry.trackId,
     anime: entry.anime,
     opening: entry.opening,
+    aliases: entry.aliases,
     difficulty: entry.difficulty,
     audioUrl: entry.audioUrl,
     fallbackAudioUrl: entry.fallbackAudioUrl,
@@ -1925,12 +1959,43 @@ function centerAction(label, action, className) {
   return button;
 }
 
+function downloadJsonFile(fileName, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  link.remove();
+}
+
+function exportTournamentResults() {
+  if (!state) return;
+  downloadJsonFile("anime-opening-quiz-wyniki-" + (state.code || "LOBBY") + ".json", {
+    room: state.code,
+    exportedAt: new Date().toISOString(),
+    teams: state.teams || {},
+    people: state.people || [],
+    tracks: (state.tracks || []).map(function (track) {
+      return {
+        anime: track.anime,
+        opening: track.opening,
+        difficulty: track.difficulty,
+        result: track.result || null
+      };
+    })
+  });
+  showToast("Wyniki turnieju pobrane.");
+}
+
 function renderAdminCenter() {
   if (!adminCenterGrid || !profile || profile.role !== "moderator") return;
   const track = state.currentTrack;
   const buzzer = state.currentBuzzer;
   const stats = state.soloStats || [];
   const reports = state.soloReports || [];
+  const persistence = state.persistence || {};
   const problemCount = stats.filter((entry) => entry.mediaError || entry.disabled || entry.qualityStatus === "needs_fix" || entry.reportsCount).length;
   adminCenterGrid.replaceChildren();
   if (adminCenterPhase) adminCenterPhase.textContent = phaseText(state.phase);
@@ -1980,7 +2045,12 @@ function renderAdminCenter() {
     node("b", "", "Pokoj " + (state.code || "LOBBY")),
     node("span", "", players + " graczy / " + groups.size + " grup / " + (state.tracks || []).length + " openingow")
   );
-  roomCard.append(roomMeta, node("div", "admin-center-kpi", String(players)));
+  const roomActions = node("div", "admin-center-actions");
+  const exportResults = node("button", "", "Eksport wynikow");
+  exportResults.type = "button";
+  exportResults.addEventListener("click", exportTournamentResults);
+  roomActions.append(node("div", "admin-center-kpi", String(players)), exportResults);
+  roomCard.append(roomMeta, roomActions);
 
   const qualityCard = node("div", "admin-center-card tournament-card");
   const qualityMeta = node("div", "track-meta");
@@ -1998,18 +2068,62 @@ function renderAdminCenter() {
   qualityActions.append(openQuality);
   qualityCard.append(qualityMeta, qualityActions);
 
-  adminCenterGrid.append(nowCard, buzzCard, roomCard, qualityCard);
+  const dataCard = node("div", "admin-center-card tournament-card");
+  const dataMeta = node("div", "track-meta");
+  dataMeta.append(
+    node("b", "", "Dane i backup"),
+    node("span", "", (persistence.label || "JSON") + " / auto-backup wlaczony")
+  );
+  if (persistence.warning) dataMeta.append(node("span", "media-error-note", persistence.warning));
+  const dataActions = node("div", "admin-center-actions");
+  const openBackup = node("button", "", "Backup");
+  openBackup.type = "button";
+  openBackup.addEventListener("click", function () {
+    activeAdminPanel = "backup";
+    renderAdminPanelTabs();
+  });
+  dataActions.append(openBackup);
+  dataCard.append(dataMeta, dataActions);
+
+  adminCenterGrid.append(nowCard, buzzCard, roomCard, qualityCard, dataCard);
 }
 
 function renderAdminSoloPlayers() {
   if (!adminSoloPlayersList || !adminSoloPlayersCount || !profile || profile.role !== "moderator") return;
   const players = Array.isArray(state.soloLeaderboard) ? state.soloLeaderboard : [];
+  const dailyPlayers = Array.isArray(state.dailySoloLeaderboard) ? state.dailySoloLeaderboard : [];
   adminSoloPlayersList.replaceChildren();
-  adminSoloPlayersCount.textContent = players.length + " graczy";
+  adminSoloPlayersCount.textContent = players.length + " graczy / daily " + dailyPlayers.length;
 
-  if (!players.length) {
+  if (!players.length && !dailyPlayers.length) {
     adminSoloPlayersList.append(node("p", "muted empty-row", "Brak zapisanych graczy solo."));
     return;
+  }
+
+  if (dailyPlayers.length) {
+    const dailySection = node("div", "solo-ranking-section");
+    const dailyTitle = node("div", "stats-category-title");
+    dailyTitle.append(node("b", "", "Daily 10"), node("span", "", dailyPlayers.length + " graczy"));
+    dailySection.append(dailyTitle);
+    dailyPlayers.slice(0, 10).forEach(function (player, index) {
+      const row = node("div", "score-row tournament-card solo-player-row daily-player-row");
+      const meta = node("div", "person-meta score-meta");
+      meta.append(
+        node("b", "", (index + 1) + ". " + (player.nickname || "Solo")),
+        node("span", "", Number(player.guessed || 0) + "/" + Number(player.attempts || 0) + " / streak: " + Number(player.bestStreak || 0))
+      );
+      const scoreValue = node("div", "score-value");
+      scoreValue.append(node("strong", "", String(Number(player.percent || 0)) + "%"));
+      row.append(meta, scoreValue);
+      dailySection.append(row);
+    });
+    adminSoloPlayersList.append(dailySection);
+  }
+
+  if (players.length) {
+    const allTitle = node("div", "stats-category-title");
+    allTitle.append(node("b", "", "Ranking caly"), node("span", "", players.length + " graczy"));
+    adminSoloPlayersList.append(allTitle);
   }
 
   players.forEach(function (player, index) {
@@ -2052,7 +2166,9 @@ function renderAdminQuality() {
     const title = [entry.anime, entry.opening].filter(Boolean).join(" / ") || "Anime bez nazwy";
     const detail = [
       entry.mediaError ? "blad ladowania" : "",
+      entry.loadFailures ? entry.loadFailures + " awarii" : "",
       entry.reportsCount ? entry.reportsCount + " zgloszen" : "",
+      entry.verifiedAt ? "sprawdzone: " + formatReportDate(entry.verifiedAt) : "",
       entry.disabled ? "wylaczone z solo" : "",
       DIFFICULTY_LABELS[entry.difficulty || "medium"] || "Medium"
     ].filter(Boolean).join(" / ");
@@ -2320,6 +2436,7 @@ function editTrack(track, source) {
   trackStartSecondInput.value = String(finiteNumber(track.startAtSecond, 5));
   trackCoverInput.value = track.coverUrl || "";
   trackDescriptionInput.value = track.description || "";
+  if (trackAliasesInput) trackAliasesInput.value = Array.isArray(track.aliases) ? track.aliases.join("\n") : (track.aliases || "");
   trackSubmitButton.textContent = editingTrackSource === "library" ? "Zapisz biblioteke" : "Zapisz";
   cancelEditButton.classList.remove("hidden");
   if (editingTrackSource === "library") {
@@ -2347,6 +2464,7 @@ function editReportedTrack(report) {
   trackStartSecondInput.value = String(finiteNumber(report.startAtSecond, 5));
   trackCoverInput.value = report.coverUrl || "";
   trackDescriptionInput.value = report.description || "";
+  if (trackAliasesInput) trackAliasesInput.value = Array.isArray(report.aliases) ? report.aliases.join("\n") : (report.aliases || "");
   trackSubmitButton.textContent = "Zapisz zgloszony";
   cancelEditButton.classList.remove("hidden");
   activeAdminPanel = "tracks";
@@ -2371,6 +2489,7 @@ function resetTrackForm() {
   trackStartSecondInput.value = "5";
   trackCoverInput.value = "";
   trackDescriptionInput.value = "";
+  if (trackAliasesInput) trackAliasesInput.value = "";
   trackSubmitButton.textContent = "Dodaj";
   cancelEditButton.classList.add("hidden");
 }
@@ -2659,7 +2778,7 @@ function syncAudio(force) {
     return;
   }
 
-  const track = state.currentTrack;
+  let track = state.currentTrack;
   if (!(profile && profile.role === "solo" && state.phase === "loading")) {
     clearMediaLoadTimer();
   }
@@ -2668,6 +2787,14 @@ function syncAudio(force) {
     audio.pause();
     pauseYouTube();
     return;
+  }
+  if (track.source === "youtube" && track.fallbackAudioUrl && lastYouTubeError && lastYouTubeError.indexOf((track.videoId || "") + ":") === 0) {
+    track = Object.assign({}, track, {
+      id: String(track.id || "track") + "_fallback",
+      source: "audio",
+      audioUrl: track.fallbackAudioUrl
+    });
+    pauseYouTube();
   }
   if (track.source === "youtube") {
     syncYouTube(track, force, clipElapsed);

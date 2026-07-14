@@ -439,11 +439,11 @@ h2 {
 
 .volume-control input {
   width: 100%;
-  accent-color: var(--pink);
+  accent-color: var(--teal);
 }
 
 .volume-control strong {
-  color: var(--text);
+  color: var(--ink);
   text-align: right;
 }
 
@@ -990,6 +990,22 @@ h2 {
   white-space: nowrap;
 }
 
+.solo-mode-button.active {
+  color: #21131a;
+  border-color: transparent;
+  background: var(--teal);
+}
+
+.daily-score-row::before,
+.daily-player-row::before {
+  background: linear-gradient(180deg, var(--amber), var(--teal));
+}
+
+.solo-ranking-section {
+  display: grid;
+  gap: 10px;
+}
+
 .solo-stat-row .score-value strong {
   min-width: 4.4ch;
 }
@@ -1470,9 +1486,17 @@ h2 {
 
 .admin-panel-tabs {
   grid-column: 1 / -1;
+  position: sticky;
+  top: 8px;
+  z-index: 5;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
+  border: 1px solid rgba(255, 219, 235, 0.12);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(18, 13, 20, 0.92);
+  backdrop-filter: blur(16px);
 }
 
 .admin-panel-card {
@@ -1612,6 +1636,11 @@ h2 {
 
 .track-description-input {
   grid-column: 4 / 7;
+  min-height: 48px;
+}
+
+.track-aliases-input {
+  grid-column: 7 / 9;
   min-height: 48px;
 }
 
@@ -1820,6 +1849,7 @@ h2 {
 
   .track-cover-input,
   .track-description-input,
+  .track-aliases-input,
   .track-local-audio-select,
   .track-fallback-audio-select,
   .audio-upload-input,

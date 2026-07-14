@@ -4,13 +4,18 @@ const http = require("http");
 const path = require("path");
 
 const PORT = Number((globalThis.process && process.env && process.env.PORT) || globalThis.MUSIC_LOBBY_PORT || 3000);
-const MODERATOR_PASSWORD = "Kochamkotki";
+const MODERATOR_PASSWORD = rawEnv("MODERATOR_PASSWORD", "Kochamkotki");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const MUSIC_DIR = path.join(PUBLIC_DIR, "music");
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "rooms.json");
 const DATA_BACKUP_FILE = path.join(DATA_DIR, "rooms.backup.json");
+const DB_FILE = path.join(DATA_DIR, "anime-opening-quiz.sqlite");
+const AUTO_BACKUP_DIR = path.join(DATA_DIR, "backups");
 const SEED_DATA_FILE = path.join(__dirname, "data", "rooms.json");
+let sqliteDb = null;
+let persistenceBackend = { type: "json", label: "JSON", file: DATA_FILE };
+let lastAutoBackupAt = 0;
 const persistedRoomConfigs = loadPersistedRooms();
 const rooms = new Map();
 const sockets = new Map();
@@ -20,6 +25,7 @@ const ANSWER_TIME_LIMIT = 15;
 const SOLO_CLIP_DURATION = 15;
 const SOLO_SEGMENT_SPLIT = 7.5;
 const SOLO_MEDIA_LOAD_TIMEOUT = 5;
+const DAILY_SOLO_ROUND_COUNT = 10;
 const DEFAULT_CLIP_DURATION = 15;
 const MAX_AVATAR_LENGTH = 60000;
 const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -56,6 +62,11 @@ const DEFAULT_DIFFICULTY_SCORES = {
   impossible: { first: 10, second: 7 }
 };
 
+function rawEnv(key, fallback) {
+  const value = globalThis.process && process.env ? process.env[key] : "";
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
 function now() {
   return Date.now() / 1000;
 }
@@ -91,6 +102,21 @@ function cleanText(value, fallback, max) {
 
 function rawText(value, max) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, max || 120);
+}
+
+function cleanAliases(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || "").split(/\n|,|;/);
+  const seen = {};
+  return source.map(function (item) {
+    return rawText(item, 180);
+  }).filter(function (item) {
+    const key = normalizeAnswer(item);
+    if (!key || seen[key]) return false;
+    seen[key] = true;
+    return true;
+  }).slice(0, 20);
 }
 
 function hasJapaneseText(value) {
@@ -285,13 +311,58 @@ function formatDurationSeconds(value) {
   return minutes + ":" + String(seconds).padStart(2, "0");
 }
 
+function openSqlitePersistence() {
+  if (sqliteDb) return sqliteDb;
+  if (rawEnv("DISABLE_SQLITE", "") === "1") return null;
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const sqlite = require("node:sqlite");
+    sqliteDb = new sqlite.DatabaseSync(DB_FILE);
+    sqliteDb.exec("CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at REAL NOT NULL)");
+    persistenceBackend = { type: "sqlite", label: "SQLite", file: DB_FILE };
+    return sqliteDb;
+  } catch (error) {
+    sqliteDb = null;
+    persistenceBackend = { type: "json", label: "JSON", file: DATA_FILE, warning: rawText(error && error.message, 160) };
+    return null;
+  }
+}
+
+function parsePersistedJson(text) {
+  return JSON.parse(String(text || "{}").replace(/^\uFEFF/, "")) || {};
+}
+
+function readPersistedJsonFile(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  return parsePersistedJson(fs.readFileSync(filePath, "utf8"));
+}
+
 function loadPersistedRooms() {
+  const db = openSqlitePersistence();
+  if (db) {
+    try {
+      const row = db.prepare("SELECT value FROM app_state WHERE key = ?").get("rooms");
+      if (row && row.value) return parsePersistedJson(row.value);
+    } catch (error) {
+      console.warn("Nie udalo sie wczytac SQLite:", error.message);
+    }
+  }
+
   const candidates = [DATA_FILE, DATA_BACKUP_FILE];
   if (path.resolve(SEED_DATA_FILE) !== path.resolve(DATA_FILE)) candidates.push(SEED_DATA_FILE);
   for (const filePath of candidates) {
     try {
-      if (!fs.existsSync(filePath)) continue;
-      return JSON.parse(fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "")) || {};
+      const loaded = readPersistedJsonFile(filePath);
+      if (!loaded) continue;
+      if (db) {
+        try {
+          db.prepare("INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+            .run("rooms", JSON.stringify(loaded), now());
+        } catch (error) {
+          console.warn("Nie udalo sie przeniesc JSON do SQLite:", error.message);
+        }
+      }
+      return loaded;
     } catch (error) {
       console.warn("Nie udalo sie wczytac zapisanych openingow z " + filePath + ":", error.message);
     }
@@ -299,16 +370,52 @@ function loadPersistedRooms() {
   return {};
 }
 
+function writeAutoBackup(jsonText) {
+  const current = now();
+  if (current - lastAutoBackupAt < 600) return;
+  lastAutoBackupAt = current;
+  try {
+    fs.mkdirSync(AUTO_BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    fs.writeFileSync(path.join(AUTO_BACKUP_DIR, "backup-" + stamp + ".json"), jsonText, "utf8");
+    const backups = fs.readdirSync(AUTO_BACKUP_DIR)
+      .filter((name) => /^backup-.*\.json$/.test(name))
+      .sort();
+    while (backups.length > 20) {
+      fs.unlinkSync(path.join(AUTO_BACKUP_DIR, backups.shift()));
+    }
+  } catch (error) {
+    console.warn("Nie udalo sie zapisac automatycznego backupu:", error.message);
+  }
+}
+
 function savePersistedRooms() {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
+    const jsonText = JSON.stringify(persistedRoomConfigs, null, 2);
+    const db = openSqlitePersistence();
+    if (db) {
+      db.prepare("INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        .run("rooms", JSON.stringify(persistedRoomConfigs), now());
+    }
     const tempFile = DATA_FILE + ".tmp";
-    fs.writeFileSync(tempFile, JSON.stringify(persistedRoomConfigs, null, 2), "utf8");
+    fs.writeFileSync(tempFile, jsonText, "utf8");
     if (fs.existsSync(DATA_FILE)) fs.copyFileSync(DATA_FILE, DATA_BACKUP_FILE);
     fs.renameSync(tempFile, DATA_FILE);
+    writeAutoBackup(jsonText);
   } catch (error) {
     console.warn("Nie udalo sie zapisac openingow:", error.message);
   }
+}
+
+function publicPersistenceInfo() {
+  return {
+    type: persistenceBackend.type,
+    label: persistenceBackend.label,
+    file: persistenceBackend.file,
+    warning: persistenceBackend.warning || "",
+    autoBackups: true
+  };
 }
 
 function restoreTracks(tracks) {
@@ -336,12 +443,14 @@ function restoreTracks(tracks) {
       const description = rawText(track.description || track.animeDescription || track.summary, 420);
       const fallbackAudioUrl = cleanAudioUrl(track.fallbackAudioUrl || track.localAudioUrl || track.backupAudioUrl, "");
       const qualityStatus = normalizeQualityStatus(track.qualityStatus, "ok");
+      const aliases = cleanAliases(track.aliases || track.answerAliases || track.altTitles);
       return {
         id: rawText(track.id, 80) || id("track_"),
         anime: anime,
         opening: opening,
         coverUrl: coverUrl,
         description: description,
+        aliases: aliases,
         fallbackAudioUrl: fallbackAudioUrl,
         qualityStatus: qualityStatus,
         englishTitle: englishTitle,
@@ -472,7 +581,7 @@ function roomClients(room) {
 }
 
 function isMetaConfigKey(code) {
-  return code === "__soloStats" || code === "__soloReports" || code === "__soloPlayers";
+  return code === "__soloStats" || code === "__soloReports" || code === "__soloPlayers" || code === "__dailySolo";
 }
 
 function soloStatsStore() {
@@ -496,8 +605,27 @@ function soloPlayersStore() {
   return persistedRoomConfigs.__soloPlayers;
 }
 
+function dailySoloStore() {
+  if (!persistedRoomConfigs.__dailySolo || typeof persistedRoomConfigs.__dailySolo !== "object" || Array.isArray(persistedRoomConfigs.__dailySolo)) {
+    persistedRoomConfigs.__dailySolo = { days: {} };
+  }
+  if (!persistedRoomConfigs.__dailySolo.days || typeof persistedRoomConfigs.__dailySolo.days !== "object" || Array.isArray(persistedRoomConfigs.__dailySolo.days)) {
+    persistedRoomConfigs.__dailySolo.days = {};
+  }
+  return persistedRoomConfigs.__dailySolo;
+}
+
 function dayKey(timestamp) {
-  return new Date((timestamp || now()) * 1000).toISOString().slice(0, 10);
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Warsaw",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date((timestamp || now()) * 1000));
+  } catch (error) {
+    return new Date((timestamp || now()) * 1000).toISOString().slice(0, 10);
+  }
 }
 
 function soloPlayerEntry(socket) {
@@ -691,11 +819,126 @@ function nextRandomSoloTrack(socket, tracks) {
   return availableTracks[crypto.randomInt(availableTracks.length)];
 }
 
+function dailySoloDay(day) {
+  const store = dailySoloStore();
+  const key = rawText(day || dayKey(now()), 20);
+  if (!store.days[key] || typeof store.days[key] !== "object" || Array.isArray(store.days[key])) {
+    store.days[key] = { day: key, players: {}, createdAt: now() };
+  }
+  if (!store.days[key].players || typeof store.days[key].players !== "object" || Array.isArray(store.days[key].players)) {
+    store.days[key].players = {};
+  }
+  return store.days[key];
+}
+
+function dailySoloTracks(socket, tracks) {
+  const day = dayKey(now());
+  const available = availableSoloTracks(socket, tracks);
+  return available.slice().sort(function (a, b) {
+    const ak = crypto.createHash("sha1").update(day + "|" + soloTrackKey(a)).digest("hex");
+    const bk = crypto.createHash("sha1").update(day + "|" + soloTrackKey(b)).digest("hex");
+    return ak.localeCompare(bk);
+  }).slice(0, Math.min(DAILY_SOLO_ROUND_COUNT, available.length));
+}
+
+function dailyPlayerEntry(socket, day) {
+  const daily = dailySoloDay(day);
+  const clientId = rawText(socket && socket.clientId, 80) || (socket && socket.id) || "solo";
+  if (!daily.players[clientId] || typeof daily.players[clientId] !== "object" || Array.isArray(daily.players[clientId])) {
+    daily.players[clientId] = {
+      clientId: clientId,
+      nickname: cleanText(socket && socket.nickname, "Solo", 60),
+      avatar: cleanAvatar(socket && socket.avatar),
+      attempts: 0,
+      guessed: 0,
+      streak: 0,
+      bestStreak: 0,
+      completed: false,
+      history: []
+    };
+  }
+  daily.players[clientId].nickname = cleanText((socket && socket.nickname) || daily.players[clientId].nickname, "Solo", 60);
+  daily.players[clientId].avatar = cleanAvatar((socket && socket.avatar) || daily.players[clientId].avatar);
+  if (!Array.isArray(daily.players[clientId].history)) daily.players[clientId].history = [];
+  return daily.players[clientId];
+}
+
+function publicDailySoloLeaderboard(day) {
+  const currentDay = rawText(day || dayKey(now()), 20);
+  const daily = dailySoloDay(currentDay);
+  return Object.keys(daily.players).map(function (clientId) {
+    const player = daily.players[clientId] || {};
+    const attempts = Math.max(0, Number(player.attempts || 0));
+    const guessed = Math.max(0, Number(player.guessed || 0));
+    return {
+      nickname: cleanText(player.nickname, "Solo", 60),
+      avatar: cleanAvatar(player.avatar),
+      attempts: attempts,
+      guessed: guessed,
+      percent: attempts ? Math.round((guessed / attempts) * 100) : 0,
+      streak: Math.max(0, Number(player.streak || 0)),
+      bestStreak: Math.max(0, Number(player.bestStreak || 0)),
+      completed: Boolean(player.completed)
+    };
+  }).sort(function (a, b) {
+    if (b.guessed !== a.guessed) return b.guessed - a.guessed;
+    if (b.bestStreak !== a.bestStreak) return b.bestStreak - a.bestStreak;
+    if (a.attempts !== b.attempts) return a.attempts - b.attempts;
+    return a.nickname.localeCompare(b.nickname);
+  }).slice(0, 30);
+}
+
+function publicDailySoloForSocket(socket) {
+  const day = dayKey(now());
+  const tracks = dailySoloTracks(socket, allSoloTracks());
+  const daily = dailySoloDay(day);
+  const clientId = rawText(socket && socket.clientId, 80) || (socket && socket.id) || "solo";
+  const player = socket && socket.soloMode === "daily"
+    ? dailyPlayerEntry(socket, day)
+    : (daily.players[clientId] || { attempts: 0, guessed: 0, history: [] });
+  const answeredKeys = {};
+  (Array.isArray(player.history) ? player.history : []).forEach(function (item) {
+    if (item && item.trackKey) answeredKeys[item.trackKey] = true;
+  });
+  const remaining = tracks.filter(function (track) {
+    return !answeredKeys[soloTrackKey(track)];
+  }).length;
+  return {
+    active: socket && socket.soloMode === "daily",
+    day: day,
+    total: tracks.length,
+    attempts: Math.max(0, Number(player.attempts || 0)),
+    guessed: Math.max(0, Number(player.guessed || 0)),
+    remaining: remaining,
+    completed: Boolean(player.completed) || (tracks.length > 0 && remaining === 0),
+    leaderboard: publicDailySoloLeaderboard(day)
+  };
+}
+
+function nextDailySoloTrack(socket, tracks) {
+  const day = dayKey(now());
+  const dailyTracks = dailySoloTracks(socket, tracks);
+  const player = dailyPlayerEntry(socket, day);
+  const answeredKeys = {};
+  player.history.forEach(function (item) {
+    if (item && item.trackKey) answeredKeys[item.trackKey] = true;
+  });
+  const nextTrack = dailyTracks.find(function (track) {
+    return !answeredKeys[soloTrackKey(track)];
+  });
+  if (!nextTrack) {
+    player.completed = dailyTracks.length > 0;
+    return null;
+  }
+  return nextTrack;
+}
+
 function updateSoloStatMeta(track, entry) {
   entry.anime = combinedAnimeTitle(track.englishTitle, track.romajiTitle, track.anime);
   entry.opening = rawText(track.opening, 120);
   entry.coverUrl = rawText(track.coverUrl, 700);
   entry.audioUrl = rawText(track.audioUrl, 700);
+  entry.aliases = cleanAliases(track.aliases);
   entry.fallbackAudioUrl = cleanAudioUrl(track.fallbackAudioUrl, "");
   entry.videoId = rawText(track.videoId, 40);
   entry.englishTitle = cleanAnimeTitlePart(track.englishTitle);
@@ -719,6 +962,7 @@ function markSoloTrackLoadError(track, reason) {
   stat.mediaError = true;
   stat.mediaErrorAt = now();
   stat.mediaErrorReason = rawText(reason, 160) || "Nie zaladowano openingu";
+  stat.loadFailures = Math.max(0, Number(stat.loadFailures || 0)) + 1;
   stat.qualityStatus = "needs_fix";
   savePersistedRooms();
   broadcastModeratorStats();
@@ -752,6 +996,7 @@ function publicSoloStats(currentKey) {
         opening: rawText(entry.opening || (track && track.opening), 120),
         coverUrl: rawText(entry.coverUrl || (track && track.coverUrl), 700),
         audioUrl: rawText(entry.audioUrl || (track && track.audioUrl), 700),
+        aliases: cleanAliases(entry.aliases || (track && track.aliases)),
         fallbackAudioUrl: cleanAudioUrl(entry.fallbackAudioUrl || (track && track.fallbackAudioUrl), ""),
         videoId: rawText(entry.videoId || (track && track.videoId), 40),
         englishTitle: cleanAnimeTitlePart(entry.englishTitle || (track && track.englishTitle)),
@@ -771,6 +1016,8 @@ function publicSoloStats(currentKey) {
         mediaError: Boolean(entry.mediaError),
         mediaErrorReason: rawText(entry.mediaErrorReason, 160),
         mediaErrorAt: numberInRange(entry.mediaErrorAt, 0, 0, 9999999999),
+        loadFailures: Math.max(0, Number(entry.loadFailures || 0)),
+        verifiedAt: numberInRange(entry.verifiedAt, 0, 0, 9999999999),
         current: key === currentKey
       };
     } else if (difficultyExists(track && track.difficulty)) {
@@ -873,6 +1120,7 @@ function publicSoloReports() {
         trackId: rawText(report.trackId, 80),
         anime: combinedAnimeTitle(report.englishTitle, report.romajiTitle, report.anime),
         opening: rawText(report.opening, 120),
+        aliases: cleanAliases(report.aliases),
         englishTitle: cleanAnimeTitlePart(report.englishTitle),
         romajiTitle: cleanAnimeTitlePart(report.romajiTitle),
         difficulty: difficultyExists(report.difficulty) ? report.difficulty : "medium",
@@ -1086,6 +1334,10 @@ function soloTrackTitles(track) {
   ].map(function (value) {
     return rawText(value, 180);
   }).filter(Boolean);
+
+  cleanAliases(track && track.aliases).forEach(function (alias) {
+    titles.push(alias);
+  });
 
   return Array.from(new Set(titles));
 }
@@ -1813,10 +2065,21 @@ async function importPlaylistTracks(room, payload) {
   if (!videos.length) return { error: "Nie znaleziono filmow na tej playliscie." };
 
   let added = 0;
+  let skipped = 0;
   const existingVideoIds = {};
-  room.libraryTracks.forEach(function (track) {
+  function rememberExisting(track) {
     const videoId = rawText(track.videoId || detectYouTubeVideoId(track.audioUrl), 40);
     if (videoId) existingVideoIds[videoId] = true;
+  }
+  Object.keys(persistedRoomConfigs).forEach(function (code) {
+    const config = persistedRoomConfigs[code];
+    if (!config || typeof config !== "object" || isMetaConfigKey(code)) return;
+    (config.tracks || []).forEach(rememberExisting);
+    (config.libraryTracks || []).forEach(rememberExisting);
+  });
+  rooms.forEach(function (savedRoom) {
+    (savedRoom.tracks || []).forEach(rememberExisting);
+    (savedRoom.libraryTracks || []).forEach(rememberExisting);
   });
 
   for (const video of videos) {
@@ -1828,10 +2091,12 @@ async function importPlaylistTracks(room, payload) {
       room.libraryTracks.push(normalized.track);
       existingVideoIds[normalized.track.videoId] = true;
       added += 1;
+    } else {
+      skipped += 1;
     }
   }
 
-  return { added: added };
+  return { added: added, skipped: skipped, total: videos.length };
 }
 
 function normalizeTrackResult(result) {
@@ -1878,6 +2143,7 @@ function normalizeTrack(payload, existing) {
   const opening = rawText(payload.opening || payload.artist, 120);
   const coverUrl = cleanImageUrl(payload.coverUrl || payload.cover || payload.thumbnailUrl, existing ? existing.coverUrl : youtubeThumbnailUrl(videoId));
   const description = rawText(payload.description || payload.animeDescription || payload.summary || (existing && existing.description), 420);
+  const aliases = cleanAliases(payload.aliases || payload.answerAliases || payload.altTitles || (existing && existing.aliases));
   const fallbackAudioUrl = cleanAudioUrl(payload.fallbackAudioUrl || payload.localAudioUrl || payload.backupAudioUrl, existing ? existing.fallbackAudioUrl : "");
   const qualityStatus = normalizeQualityStatus(payload.qualityStatus, existing ? existing.qualityStatus : "ok");
   const durationSeconds = numberInRange(payload.durationSeconds, existing ? existing.durationSeconds : parseDurationText(payload.durationText), 0, 86400);
@@ -1890,6 +2156,7 @@ function normalizeTrack(payload, existing) {
       opening: opening,
       coverUrl: coverUrl,
       description: description,
+      aliases: aliases,
       fallbackAudioUrl: fallbackAudioUrl,
       qualityStatus: qualityStatus,
       englishTitle: englishTitle,
@@ -1923,6 +2190,7 @@ function visibleTrack(track, socket, room) {
     opening: opening,
     coverUrl: canSeeAdminMeta ? (track.coverUrl || "") : "",
     description: canSeeAdminMeta ? (track.description || "") : "",
+    aliases: canSeeAdminMeta ? cleanAliases(track.aliases) : [],
     englishTitle: canSeeTitle ? (track.englishTitle || "") : "",
     romajiTitle: canSeeTitle ? (track.romajiTitle || "") : "",
     animeHintSteps: canSeeTitle ? [] : animeHintSteps(track.anime),
@@ -1931,7 +2199,7 @@ function visibleTrack(track, socket, room) {
     artist: opening,
     difficulty: track.difficulty || "medium",
     audioUrl: track.audioUrl,
-    fallbackAudioUrl: canSeeAdminMeta ? (track.fallbackAudioUrl || "") : "",
+    fallbackAudioUrl: track.fallbackAudioUrl || "",
     source: track.source || "audio",
     videoId: track.videoId || "",
     qualityStatus: track.qualityStatus || "ok",
@@ -2042,6 +2310,8 @@ function publicRoom(room, socket) {
       soloStats: isModerator ? publicSoloStats(room.currentTrackId ? soloTrackKey(currentTrack(room) || {}) : "") : [],
       soloReports: isModerator ? publicSoloReports() : [],
       soloLeaderboard: isModerator ? publicSoloLeaderboard() : [],
+      dailySoloLeaderboard: isModerator ? publicDailySoloLeaderboard(dayKey(now())) : [],
+      persistence: isModerator ? publicPersistenceInfo() : null,
       adminRooms: isModerator ? publicAdminRooms(room.code) : []
     }
   };
@@ -2133,6 +2403,7 @@ function publicSoloState(socket) {
   const session = socket.soloSession;
   const trackKey = session && session.track ? soloTrackKey(session.track) : "";
   const soloProfile = publicSoloProfile(socket);
+  const dailySolo = publicDailySoloForSocket(socket);
   return {
     type: "soloState",
     room: {
@@ -2171,8 +2442,10 @@ function publicSoloState(socket) {
         mediaError: Boolean(session && session.mediaError),
         mediaErrorReason: session && session.mediaError ? rawText(session.mediaErrorReason, 160) : ""
       },
+      soloDaily: dailySolo,
       soloProfile: soloProfile,
       soloLeaderboard: publicSoloLeaderboard(),
+      dailySoloLeaderboard: dailySolo.leaderboard,
       soloStats: [],
       soloTitleOptions: publicSoloTitleOptions()
     }
@@ -2190,7 +2463,28 @@ function startSoloRound(socket, autoplay) {
     return;
   }
 
-  const track = nextRandomSoloTrack(socket, tracks);
+  const isDaily = socket.soloMode === "daily";
+  const track = isDaily ? nextDailySoloTrack(socket, tracks) : nextRandomSoloTrack(socket, tracks);
+
+  if (!track) {
+    socket.soloSession = {
+      track: null,
+      phase: "ended",
+      startedAt: 0,
+      loadingStartedAt: 0,
+      offset: 0,
+      answered: true,
+      guessed: null,
+      revealed: true,
+      mediaReady: false,
+      mediaError: false,
+      mediaErrorReason: "",
+      daily: isDaily,
+      completed: true
+    };
+    sendSoloState(socket);
+    return;
+  }
 
   socket.soloSession = {
     track: track,
@@ -2203,7 +2497,8 @@ function startSoloRound(socket, autoplay) {
     revealed: false,
     mediaReady: false,
     mediaError: false,
-    mediaErrorReason: ""
+    mediaErrorReason: "",
+    daily: isDaily
   };
   soloStatForTrack(track);
   sendSoloState(socket);
@@ -2313,6 +2608,32 @@ function recordSoloAnswer(socket, guessed, answerText) {
   });
   if (player.history.length > 80) player.history.splice(0, player.history.length - 80);
 
+  if (session.daily) {
+    const day = dayKey(now());
+    const dailyPlayer = dailyPlayerEntry(socket, day);
+    const dailyTrackKey = soloTrackKey(session.track);
+    const alreadyAnswered = dailyPlayer.history.some(function (item) {
+      return item && item.trackKey === dailyTrackKey;
+    });
+    if (!alreadyAnswered) {
+      dailyPlayer.attempts = Math.max(0, Number(dailyPlayer.attempts || 0)) + 1;
+      if (session.guessed) dailyPlayer.guessed = Math.max(0, Number(dailyPlayer.guessed || 0)) + 1;
+      dailyPlayer.streak = session.guessed ? Math.max(0, Number(dailyPlayer.streak || 0)) + 1 : 0;
+      dailyPlayer.bestStreak = Math.max(Math.max(0, Number(dailyPlayer.bestStreak || 0)), dailyPlayer.streak);
+      dailyPlayer.history.push({
+        at: now(),
+        trackKey: dailyTrackKey,
+        anime: combinedAnimeTitle(session.track.englishTitle, session.track.romajiTitle, session.track.anime),
+        opening: rawText(session.track.opening, 120),
+        answerText: rawText(answerText, 180),
+        guessed: session.guessed
+      });
+      const totalDailyTracks = dailySoloTracks(socket, allSoloTracks()).length;
+      dailyPlayer.completed = totalDailyTracks > 0 && dailyPlayer.history.length >= totalDailyTracks;
+      dailyPlayer.updatedAt = now();
+    }
+  }
+
   savePersistedRooms();
   sendSoloState(socket);
   broadcastModeratorStats();
@@ -2340,6 +2661,7 @@ function recordSoloReport(socket, payload) {
     trackId: rawText(track.id, 80),
     anime: combinedAnimeTitle(track.englishTitle, track.romajiTitle, track.anime),
     opening: rawText(track.opening, 120),
+    aliases: cleanAliases(track.aliases),
     englishTitle: cleanAnimeTitlePart(track.englishTitle),
     romajiTitle: cleanAnimeTitlePart(track.romajiTitle),
     difficulty: difficultyExists(track.difficulty) ? track.difficulty : "medium",
@@ -2373,6 +2695,7 @@ function handleSoloJoin(socket, payload) {
   socket.soloStreak = Math.max(0, Number(soloPlayer.streak || soloStreaks.get(socket.clientId) || socket.soloStreak || 0));
   socket.soloLoadFailures = {};
   socket.soloQueue = [];
+  socket.soloMode = "random";
   socket.team = "Solo";
   socket.playMode = "solo";
   socket.joined = true;
@@ -2386,6 +2709,18 @@ function handleSoloJoin(socket, payload) {
 function handleSoloAction(socket, payload) {
   if (socket.role !== "solo") return sendError(socket, "Tryb solo nie jest wlaczony.");
   const action = payload.action;
+
+  if (action === "daily") {
+    socket.soloMode = "daily";
+    socket.soloQueue = [];
+    return startSoloRound(socket, Boolean(payload.autoplay));
+  }
+
+  if (action === "random") {
+    socket.soloMode = "random";
+    socket.soloQueue = [];
+    return startSoloRound(socket, Boolean(payload.autoplay));
+  }
 
   if (action === "start") {
     if (!socket.soloSession) startSoloRound(socket, false);
@@ -2686,6 +3021,7 @@ function updateSoloStatQuality(payload) {
     delete store[statKey].mediaErrorAt;
     store[statKey].disabled = Boolean(payload.disabled);
   }
+  if (status === "verified") store[statKey].verifiedAt = now();
   store[statKey].qualityUpdatedAt = now();
   savePersistedRooms();
   broadcastModeratorStats();
@@ -2699,6 +3035,7 @@ function clearSoloStatMediaError(payload) {
   delete store[statKey].mediaError;
   delete store[statKey].mediaErrorReason;
   delete store[statKey].mediaErrorAt;
+  store[statKey].loadFailures = 0;
   if (store[statKey].qualityStatus === "needs_fix") store[statKey].qualityStatus = "ok";
   store[statKey].disabled = false;
   savePersistedRooms();
@@ -2749,6 +3086,7 @@ function updateReportMetaForTrack(oldKey, track) {
     report.trackId = rawText(track.id, 80);
     report.anime = combinedAnimeTitle(track.englishTitle, track.romajiTitle, track.anime);
     report.opening = rawText(track.opening, 120);
+    report.aliases = cleanAliases(track.aliases);
     report.englishTitle = cleanAnimeTitlePart(track.englishTitle);
     report.romajiTitle = cleanAnimeTitlePart(track.romajiTitle);
     report.difficulty = difficultyExists(track.difficulty) ? track.difficulty : "medium";
@@ -3121,7 +3459,10 @@ async function handleModerator(socket, payload) {
   if (action === "importPlaylist") {
     const result = await importPlaylistTracks(room, payload || {});
     if (result.error) return sendError(socket, result.error);
-    send(socket, { type: "playlistImported", message: "Dodano do biblioteki openingow: " + result.added + "." });
+    send(socket, {
+      type: "playlistImported",
+      message: "Import gotowy: dodano " + result.added + ", pominieto " + result.skipped + " z " + result.total + "."
+    });
   }
 
   if (action === "updateTrack") {
@@ -3360,7 +3701,7 @@ function contentType(filePath) {
 
 function cacheControl(filePath) {
   const extension = path.extname(filePath).toLowerCase();
-  if ([".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".webp", ".svg"].includes(extension)) {
+  if ([".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".webp", ".svg", ".webmanifest"].includes(extension)) {
     return "no-store";
   }
   return "public, max-age=3600";
@@ -3399,8 +3740,9 @@ function parseJsonBody(req, res, maxBytes, callback) {
 function dataBackupPayload() {
   return {
     app: "anime-opening-quiz",
-    version: 2,
+    version: 3,
     exportedAt: now(),
+    persistence: publicPersistenceInfo(),
     rooms: persistedRoomConfigs
   };
 }
@@ -3439,6 +3781,8 @@ function importPersistedRooms(imported) {
       persistedRoomConfigs[code] = Array.isArray(source[key]) ? source[key] : [];
     } else if (code === "__soloPlayers") {
       persistedRoomConfigs[code] = source[key] && typeof source[key] === "object" && !Array.isArray(source[key]) ? source[key] : {};
+    } else if (code === "__dailySolo") {
+      persistedRoomConfigs[code] = source[key] && typeof source[key] === "object" && !Array.isArray(source[key]) ? source[key] : { days: {} };
     } else if (source[key] && typeof source[key] === "object") {
       persistedRoomConfigs[code] = source[key];
     }

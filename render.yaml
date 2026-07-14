@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: muzyczne-lobby
+    name: anime-opening-quiz
     env: node
     plan: free
     buildCommand: yarn
@@ -8,7 +8,9 @@ services:
     envVars:
       - key: DATA_DIR
         value: /var/data
+      - key: MODERATOR_PASSWORD
+        value: Kochamkotki
     disk:
-      name: muzyczne-lobby-data
+      name: anime-opening-quiz-data
       mountPath: /var/data
       sizeGB: 1

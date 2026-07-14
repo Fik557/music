@@ -3,7 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#17121b" />
     <title>Anime Opening Quiz</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -155,6 +157,8 @@
                 </form>
                 <datalist id="soloAnswerOptions"></datalist>
                 <div class="solo-action-row">
+                  <button class="solo-mode-button active" id="soloRandomButton" type="button">Losowo</button>
+                  <button class="solo-mode-button" id="soloDailyButton" type="button">Daily 10</button>
                   <button class="primary hidden" id="soloGuessedButton" type="button">Zgadlem</button>
                   <button id="soloMissedButton" type="button">Nie zgadlem</button>
                   <button id="soloNextButton" type="button">Nastepny</button>
@@ -291,6 +295,7 @@
               <span class="audio-upload-status muted" id="audioUploadStatus"></span>
               <input class="track-cover-input" id="trackCoverInput" placeholder="Link okladki" aria-label="Link okladki anime" />
               <textarea class="track-description-input" id="trackDescriptionInput" placeholder="Krotki opis anime" aria-label="Krotki opis anime" rows="2"></textarea>
+              <textarea class="track-aliases-input" id="trackAliasesInput" placeholder="Aliasy odpowiedzi" aria-label="Aliasy odpowiedzi" rows="2"></textarea>
               <button class="primary" id="trackSubmitButton" type="submit">Dodaj</button>
               <button class="ghost hidden" id="cancelEditButton" type="button">Anuluj</button>
             </form>

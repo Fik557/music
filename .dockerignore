@@ -1,0 +1,10 @@
+node_modules
+muzyczne-lobby/node_modules
+.git
+.env
+*.log
+*.zip
+*.rar
+codex-*.log
+local-server*.log
+node-start*.log

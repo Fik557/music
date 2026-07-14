@@ -2420,6 +2420,10 @@ function publicBuzzer(room) {
 }
 
 function addChangedStateField(target, socket, scope, key, value) {
+  if (String(scope || "").startsWith("solo:")) {
+    target[key] = value;
+    return;
+  }
   if (!socket.stateFieldSignatures) socket.stateFieldSignatures = Object.create(null);
   const serialized = JSON.stringify(value);
   const signature = crypto.createHash("sha1").update(serialized === undefined ? "undefined" : serialized).digest("base64");

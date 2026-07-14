@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#17121b" />
     <title>Anime Opening Quiz</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=6" />
   </head>
   <body>
     <main class="shell">
@@ -115,6 +115,26 @@
         </header>
 
         <div class="grid" id="mainGrid">
+          <aside class="solo-day-streak-card hidden" id="soloDayStreakCard" aria-live="polite">
+            <div class="solo-day-streak-head">
+              <span class="solo-day-flame" aria-hidden="true">🔥</span>
+              <div>
+                <p class="eyebrow">streak dnia</p>
+                <strong id="soloDayStreakValue">0</strong>
+              </div>
+            </div>
+            <div class="solo-day-streak-stats">
+              <div>
+                <span>Najlepszy dzis</span>
+                <strong id="soloDayBestValue">0</strong>
+              </div>
+              <div>
+                <span>Zgadniete</span>
+                <strong id="soloDayScoreValue">0/0</strong>
+              </div>
+            </div>
+          </aside>
+
           <aside class="admin-anime-card hidden" id="adminAnimeCard">
             <div class="admin-anime-cover" id="adminAnimeCover">
               <span id="adminAnimeCoverFallback">?</span>
@@ -152,6 +172,9 @@
             <div class="buzzer-zone">
               <button class="sound-button" id="soundButton" type="button">Wlacz dzwiek</button>
               <button class="buzzer" id="buzzButton" type="button">Zgaduje!</button>
+              <div class="solo-preroll hidden" id="soloPreroll" aria-live="assertive" aria-label="Odliczanie do startu openingu">
+                <span id="soloPrerollValue">3</span>
+              </div>
               <p class="buzz-caption" id="buzzCaption">Czeka na start rundy.</p>
               <div class="solo-controls hidden" id="soloControls">
                 <div class="solo-mode-switch" aria-label="Tryb gry solo">
@@ -478,9 +501,9 @@
       </section>
     </main>
 
-    <audio id="songAudio" preload="auto" crossorigin="anonymous"></audio>
+    <audio id="songAudio" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></audio>
     <div class="youtube-stage" id="youtubePlayer" aria-hidden="true"></div>
     <div class="toast hidden" id="toast"></div>
-    <script src="/app.js"></script>
+    <script src="/app.js?v=6"></script>
   </body>
 </html>

@@ -687,7 +687,7 @@ function roomClients(room) {
 }
 
 function isMetaConfigKey(code) {
-  return code === "__soloStats" || code === "__soloReports" || code === "__soloPlayers" || code === "__dailySolo";
+  return code === "__soloStats" || code === "__soloReports" || code === "__soloPlayers" || code === "__dailySolo" || code === "__soloDayChampion";
 }
 
 function soloStatsStore() {
@@ -709,6 +709,13 @@ function soloPlayersStore() {
     persistedRoomConfigs.__soloPlayers = {};
   }
   return persistedRoomConfigs.__soloPlayers;
+}
+
+function soloDayChampionStore() {
+  if (!persistedRoomConfigs.__soloDayChampion || typeof persistedRoomConfigs.__soloDayChampion !== "object" || Array.isArray(persistedRoomConfigs.__soloDayChampion)) {
+    persistedRoomConfigs.__soloDayChampion = { dayKey: "", clientId: "", streak: 0 };
+  }
+  return persistedRoomConfigs.__soloDayChampion;
 }
 
 function dailySoloStore() {
@@ -849,10 +856,17 @@ function publicSoloLeaderboard() {
 
 function publicSoloDayChampion() {
   const currentDayKey = dayKey(now());
+  const championStore = soloDayChampionStore();
+  if (championStore.dayKey !== currentDayKey) {
+    championStore.dayKey = currentDayKey;
+    championStore.clientId = "";
+    championStore.streak = 0;
+  }
   const players = Object.keys(soloPlayersStore()).map(function (clientId) {
     const entry = soloPlayersStore()[clientId] || {};
     if (entry.todayKey !== currentDayKey) return null;
     return {
+      clientId: clientId,
       nickname: cleanText(entry.nickname, "Solo", 60),
       avatar: cleanAvatar(entry.avatar),
       streak: Math.max(0, Number(entry.todayBestStreak || 0)),
@@ -865,13 +879,27 @@ function publicSoloDayChampion() {
     return entry && entry.streak > 0;
   }).sort(function (a, b) {
     if (b.streak !== a.streak) return b.streak - a.streak;
-    if (b.currentStreak !== a.currentStreak) return b.currentStreak - a.currentStreak;
-    if (b.guessed !== a.guessed) return b.guessed - a.guessed;
-    if (a.attempts !== b.attempts) return a.attempts - b.attempts;
     return a.nickname.localeCompare(b.nickname);
   });
 
-  return players[0] || {
+  const currentChampion = players.find(function (entry) {
+    return entry.clientId === championStore.clientId;
+  });
+  const topPlayer = players[0] || null;
+  const champion = currentChampion && (!topPlayer || topPlayer.streak <= currentChampion.streak)
+    ? currentChampion
+    : topPlayer;
+
+  if (champion) {
+    championStore.clientId = champion.clientId;
+    championStore.streak = champion.streak;
+  } else {
+    championStore.clientId = "";
+    championStore.streak = 0;
+  }
+
+  return champion || {
+    clientId: "",
     nickname: "",
     avatar: "",
     streak: 0,
@@ -2734,10 +2762,10 @@ function startSoloRound(socket, autoplay) {
 
   socket.soloSession = {
     track: track,
-    phase: autoplay ? "countdown" : "idle",
+    phase: autoplay ? "loading" : "idle",
     startedAt: 0,
     loadingStartedAt: autoplay ? now() : 0,
-    countdownEndsAt: autoplay ? now() + SOLO_PREROLL_DURATION : 0,
+    countdownEndsAt: 0,
     offset: 0,
     answered: false,
     guessed: null,
@@ -2762,10 +2790,10 @@ function failSoloMedia(socket, reason) {
       source: "audio",
       usingFallback: true
     });
-    session.phase = "countdown";
+    session.phase = "loading";
     session.startedAt = 0;
     session.loadingStartedAt = now();
-    session.countdownEndsAt = now() + SOLO_PREROLL_DURATION;
+    session.countdownEndsAt = 0;
     session.offset = 0;
     session.mediaReady = false;
     session.mediaError = false;
@@ -2835,7 +2863,12 @@ function markSoloMediaReady(socket) {
   session.mediaReady = true;
   session.mediaError = false;
   session.mediaErrorReason = "";
-  if (!session.countdownEndsAt) session.countdownEndsAt = now() + SOLO_PREROLL_DURATION;
+  if (session.phase === "loading") {
+    session.phase = "countdown";
+    session.countdownEndsAt = now() + SOLO_PREROLL_DURATION;
+  } else if (!session.countdownEndsAt) {
+    session.countdownEndsAt = now() + SOLO_PREROLL_DURATION;
+  }
   if (now() >= session.countdownEndsAt) return startSoloPlayback(socket);
   sendSoloState(socket);
   return true;
@@ -3003,10 +3036,10 @@ function handleSoloAction(socket, payload) {
     const session = socket.soloSession;
     if (session && session.mediaError) return startSoloRound(socket, true);
     if (session && !session.answered && session.phase !== "playing" && session.phase !== "loading" && session.phase !== "countdown") {
-      session.phase = "countdown";
+      session.phase = "loading";
       session.startedAt = 0;
       session.loadingStartedAt = now();
-      session.countdownEndsAt = now() + SOLO_PREROLL_DURATION;
+      session.countdownEndsAt = 0;
       session.offset = 0;
       session.revealed = false;
       session.mediaReady = false;

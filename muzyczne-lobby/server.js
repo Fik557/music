@@ -747,6 +747,7 @@ function soloPlayerEntry(socket) {
       todayAttempts: 0,
       todayGuessed: 0,
       todayKey: dayKey(now()),
+      randomSeenKeys: [],
       history: []
     };
   }
@@ -765,6 +766,10 @@ function soloPlayerEntry(socket) {
   entry.guessed = Math.max(0, Number(entry.guessed || 0));
   entry.todayAttempts = Math.max(0, Number(entry.todayAttempts || 0));
   entry.todayGuessed = Math.max(0, Number(entry.todayGuessed || 0));
+  if (!Array.isArray(entry.randomSeenKeys)) entry.randomSeenKeys = [];
+  entry.randomSeenKeys = Array.from(new Set(entry.randomSeenKeys.map(function (key) {
+    return rawText(key, 120);
+  }).filter(Boolean))).slice(-1000);
   if (!Array.isArray(entry.history)) entry.history = [];
   return entry;
 }
@@ -896,31 +901,36 @@ function nextRandomSoloTrack(socket, tracks) {
     byKey[soloTrackKey(track)] = track;
   });
 
-  const previousKey = socket.soloSession && socket.soloSession.track ? soloTrackKey(socket.soloSession.track) : "";
-  const hasPlayableQueuedTrack = Array.isArray(socket.soloQueue) && socket.soloQueue.some(function (key) {
-    return byKey[key] && (availableTracks.length < 2 || key !== previousKey);
+  const player = soloPlayerEntry(socket);
+  const allKeys = new Set((tracks || []).map(soloTrackKey));
+  player.randomSeenKeys = player.randomSeenKeys.filter(function (key) {
+    return allKeys.has(key);
   });
 
-  if (!hasPlayableQueuedTrack) {
-    socket.soloQueue = shuffleSoloTrackKeys(availableTracks.map(function (track) {
-      return soloTrackKey(track);
-    }));
-    if (socket.soloQueue.length > 1 && socket.soloQueue[0] === previousKey) {
-      socket.soloQueue.push(socket.soloQueue.shift());
-    }
+  let seen = new Set(player.randomSeenKeys);
+  const previousKey = socket.soloSession && socket.soloSession.track ? soloTrackKey(socket.soloSession.track) : "";
+  let candidates = availableTracks.filter(function (track) {
+    return !seen.has(soloTrackKey(track));
+  });
+
+  if (!candidates.length) {
+    player.randomSeenKeys = [];
+    seen = new Set();
+    candidates = availableTracks.slice();
   }
 
-  while (socket.soloQueue && socket.soloQueue.length) {
-    const key = socket.soloQueue.shift();
-    if (!byKey[key]) continue;
-    if (availableTracks.length > 1 && key === previousKey && socket.soloQueue.some(function (queuedKey) { return byKey[queuedKey]; })) {
-      socket.soloQueue.push(key);
-      continue;
-    }
-    return byKey[key];
+  const withoutPrevious = candidates.filter(function (track) {
+    return soloTrackKey(track) !== previousKey;
+  });
+  if (withoutPrevious.length) candidates = withoutPrevious;
+
+  const selected = candidates[crypto.randomInt(candidates.length)];
+  if (selected) {
+    player.randomSeenKeys.push(soloTrackKey(selected));
+    savePersistedRooms();
   }
 
-  return availableTracks[crypto.randomInt(availableTracks.length)];
+  return selected;
 }
 
 function dailySoloDay(day) {

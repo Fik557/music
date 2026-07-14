@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#17121b" />
     <title>Anime Opening Quiz</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=6" />
+    <link rel="stylesheet" href="/styles.css?v=7" />
   </head>
   <body>
     <main class="shell">
@@ -495,6 +495,14 @@
               <h2>Zgloszenia</h2>
               <span id="adminReportsCount">0</span>
             </div>
+            <div class="report-toolbar" aria-label="Filtrowanie zgloszen">
+              <input id="adminReportSearchInput" type="search" placeholder="Szukaj anime, openingu, gracza lub opisu" aria-label="Szukaj zgloszen" autocomplete="off" />
+              <select id="adminReportSortInput" aria-label="Sortowanie zgloszen">
+                <option value="newest">Najnowsze</option>
+                <option value="az">Alfabetycznie A-Z</option>
+                <option value="za">Alfabetycznie Z-A</option>
+              </select>
+            </div>
             <div class="admin-report-list" id="adminReportList"></div>
           </div>
         </section>
@@ -504,6 +512,6 @@
     <audio id="songAudio" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></audio>
     <div class="youtube-stage" id="youtubePlayer" aria-hidden="true"></div>
     <div class="toast hidden" id="toast"></div>
-    <script src="/app.js?v=6"></script>
+    <script src="/app.js?v=7"></script>
   </body>
 </html>

@@ -28,6 +28,7 @@ const ANSWER_TIME_LIMIT = 15;
 const SOLO_CLIP_DURATION = 15;
 const SOLO_SEGMENT_SPLIT = 7.5;
 const SOLO_MEDIA_LOAD_TIMEOUT = 5;
+const SOLO_PREROLL_DURATION = 3;
 const DAILY_SOLO_ROUND_COUNT = 10;
 const DEFAULT_CLIP_DURATION = 15;
 const MAX_AVATAR_LENGTH = 60000;
@@ -746,6 +747,8 @@ function soloPlayerEntry(socket) {
       guessed: 0,
       todayAttempts: 0,
       todayGuessed: 0,
+      todayStreak: 0,
+      todayBestStreak: 0,
       todayKey: dayKey(now()),
       randomSeenKeys: [],
       history: []
@@ -759,6 +762,22 @@ function soloPlayerEntry(socket) {
     entry.todayKey = dayKey(now());
     entry.todayAttempts = 0;
     entry.todayGuessed = 0;
+    entry.todayStreak = 0;
+    entry.todayBestStreak = 0;
+  }
+  if (!Array.isArray(entry.history)) entry.history = [];
+  const missingTodayStreak = !Number.isFinite(Number(entry.todayStreak));
+  const missingTodayBest = !Number.isFinite(Number(entry.todayBestStreak));
+  if (missingTodayStreak || missingTodayBest) {
+    let running = 0;
+    let best = 0;
+    entry.history.forEach(function (item) {
+      if (!item || dayKey(item.at) !== entry.todayKey) return;
+      running = item.guessed ? running + 1 : 0;
+      best = Math.max(best, running);
+    });
+    if (missingTodayStreak) entry.todayStreak = running;
+    if (missingTodayBest) entry.todayBestStreak = best;
   }
   entry.streak = Math.max(0, Number(entry.streak || 0));
   entry.bestStreak = Math.max(0, Number(entry.bestStreak || 0));
@@ -766,11 +785,12 @@ function soloPlayerEntry(socket) {
   entry.guessed = Math.max(0, Number(entry.guessed || 0));
   entry.todayAttempts = Math.max(0, Number(entry.todayAttempts || 0));
   entry.todayGuessed = Math.max(0, Number(entry.todayGuessed || 0));
+  entry.todayStreak = Math.max(0, Number(entry.todayStreak || 0));
+  entry.todayBestStreak = Math.max(0, Number(entry.todayBestStreak || 0));
   if (!Array.isArray(entry.randomSeenKeys)) entry.randomSeenKeys = [];
   entry.randomSeenKeys = Array.from(new Set(entry.randomSeenKeys.map(function (key) {
     return rawText(key, 120);
   }).filter(Boolean))).slice(-1000);
-  if (!Array.isArray(entry.history)) entry.history = [];
   return entry;
 }
 
@@ -787,6 +807,8 @@ function publicSoloProfile(socket) {
     percent: entry.attempts ? Math.round((entry.guessed / entry.attempts) * 100) : 0,
     todayAttempts: Math.max(0, Number(entry.todayAttempts || 0)),
     todayGuessed: Math.max(0, Number(entry.todayGuessed || 0)),
+    todayStreak: Math.max(0, Number(entry.todayStreak || 0)),
+    todayBestStreak: Math.max(0, Number(entry.todayBestStreak || 0)),
     history: entry.history.slice(-12).reverse().map(function (item) {
       return {
         at: numberInRange(item.at, 0, 0, 9999999999),
@@ -2582,6 +2604,9 @@ function publicSoloState(socket) {
     phase: session ? session.phase : "idle",
     startedAt: session ? session.startedAt : 0,
     offset: soloElapsed(socket),
+    countdownLeft: session && session.phase === "countdown"
+      ? Math.max(0, Number(session.countdownEndsAt || 0) - now())
+      : 0,
     revealed: Boolean(session && (session.revealed || session.answered)),
     roundClosed: Boolean(session && session.answered),
     currentTrackId: trackKey,
@@ -2595,7 +2620,8 @@ function publicSoloState(socket) {
       todayAttempts: soloProfile ? soloProfile.todayAttempts : 0,
       todayGuessed: soloProfile ? soloProfile.todayGuessed : 0,
       mediaError: Boolean(session && session.mediaError),
-      mediaErrorReason: session && session.mediaError ? rawText(session.mediaErrorReason, 160) : ""
+      mediaErrorReason: session && session.mediaError ? rawText(session.mediaErrorReason, 160) : "",
+      mediaReady: Boolean(session && session.mediaReady)
     }
   };
 
@@ -2648,6 +2674,7 @@ function startSoloRound(socket, autoplay) {
       phase: "ended",
       startedAt: 0,
       loadingStartedAt: 0,
+      countdownEndsAt: 0,
       offset: 0,
       answered: true,
       guessed: null,
@@ -2664,9 +2691,10 @@ function startSoloRound(socket, autoplay) {
 
   socket.soloSession = {
     track: track,
-    phase: autoplay ? "loading" : "idle",
+    phase: autoplay ? "countdown" : "idle",
     startedAt: 0,
     loadingStartedAt: autoplay ? now() : 0,
+    countdownEndsAt: autoplay ? now() + SOLO_PREROLL_DURATION : 0,
     offset: 0,
     answered: false,
     guessed: null,
@@ -2691,9 +2719,10 @@ function failSoloMedia(socket, reason) {
       source: "audio",
       usingFallback: true
     });
-    session.phase = "loading";
+    session.phase = "countdown";
     session.startedAt = 0;
     session.loadingStartedAt = now();
+    session.countdownEndsAt = now() + SOLO_PREROLL_DURATION;
     session.offset = 0;
     session.mediaReady = false;
     session.mediaError = false;
@@ -2721,6 +2750,7 @@ function failSoloMedia(socket, reason) {
   session.phase = "idle";
   session.startedAt = 0;
   session.loadingStartedAt = 0;
+  session.countdownEndsAt = 0;
   session.offset = 0;
   session.revealed = false;
   session.mediaReady = false;
@@ -2735,11 +2765,12 @@ function failSoloMedia(socket, reason) {
 function startSoloPlayback(socket) {
   const session = socket.soloSession;
   if (!session || !session.track || session.answered) return false;
-  if (session.phase !== "loading" && session.phase !== "idle") return false;
+  if (session.phase !== "loading" && session.phase !== "countdown" && session.phase !== "idle") return false;
 
   session.phase = "playing";
   session.startedAt = now();
   session.loadingStartedAt = 0;
+  session.countdownEndsAt = 0;
   session.offset = 0;
   session.revealed = false;
   session.mediaReady = true;
@@ -2749,6 +2780,20 @@ function startSoloPlayback(socket) {
   const key = soloTrackKey(session.track);
   if (socket.soloLoadFailures && key) delete socket.soloLoadFailures[key];
   clearSoloTrackLoadError(session.track);
+  sendSoloState(socket);
+  return true;
+}
+
+function markSoloMediaReady(socket) {
+  const session = socket.soloSession;
+  if (!session || !session.track || session.answered) return false;
+  if (session.phase !== "loading" && session.phase !== "countdown") return false;
+
+  session.mediaReady = true;
+  session.mediaError = false;
+  session.mediaErrorReason = "";
+  if (!session.countdownEndsAt) session.countdownEndsAt = now() + SOLO_PREROLL_DURATION;
+  if (now() >= session.countdownEndsAt) return startSoloPlayback(socket);
   sendSoloState(socket);
   return true;
 }
@@ -2781,6 +2826,8 @@ function recordSoloAnswer(socket, guessed, answerText) {
   }
   player.streak = Math.max(0, Number(socket.soloStreak || 0));
   player.bestStreak = Math.max(Math.max(0, Number(player.bestStreak || 0)), player.streak);
+  player.todayStreak = session.guessed ? Math.max(0, Number(player.todayStreak || 0)) + 1 : 0;
+  player.todayBestStreak = Math.max(Math.max(0, Number(player.todayBestStreak || 0)), player.todayStreak);
   player.updatedAt = now();
   player.history.push({
     at: now(),
@@ -2912,10 +2959,11 @@ function handleSoloAction(socket, payload) {
     if (!socket.soloSession) startSoloRound(socket, false);
     const session = socket.soloSession;
     if (session && session.mediaError) return startSoloRound(socket, true);
-    if (session && !session.answered && session.phase !== "playing" && session.phase !== "loading") {
-      session.phase = "loading";
+    if (session && !session.answered && session.phase !== "playing" && session.phase !== "loading" && session.phase !== "countdown") {
+      session.phase = "countdown";
       session.startedAt = 0;
       session.loadingStartedAt = now();
+      session.countdownEndsAt = now() + SOLO_PREROLL_DURATION;
       session.offset = 0;
       session.revealed = false;
       session.mediaReady = false;
@@ -2929,7 +2977,7 @@ function handleSoloAction(socket, payload) {
     const session = socket.soloSession;
     const key = rawText(payload.key, 240);
     if (!session || !session.track || session.answered || key !== soloTrackKey(session.track)) return;
-    return startSoloPlayback(socket);
+    return markSoloMediaReady(socket);
   }
 
   if (action === "mediaError") {
@@ -4283,9 +4331,13 @@ setInterval(function () {
 
   sockets.forEach(function (socket) {
     const session = socket.soloSession;
-    if (socket.role === "solo" && session && session.phase === "loading" && !session.answered) {
+    if (socket.role === "solo" && session && (session.phase === "loading" || session.phase === "countdown") && !session.answered) {
+      if (session.phase === "countdown" && session.mediaReady && now() >= Number(session.countdownEndsAt || 0)) {
+        startSoloPlayback(socket);
+        return;
+      }
       const loadingStartedAt = Number(session.loadingStartedAt || 0);
-      if (loadingStartedAt > 0 && now() - loadingStartedAt >= SOLO_MEDIA_LOAD_TIMEOUT) {
+      if (!session.mediaReady && loadingStartedAt > 0 && now() - loadingStartedAt >= SOLO_MEDIA_LOAD_TIMEOUT) {
         const failed = failSoloMedia(socket, "Opening nie zaladowal sie w 5 sekund.");
         if (failed === "fallback") return;
         startSoloRound(socket, true);

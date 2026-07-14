@@ -2449,6 +2449,22 @@ function ensureYouTubePlayer(track, desiredTime) {
   return true;
 }
 
+function youtubeReadyForTrack(track) {
+  if (!youtubePlayerReady || !youtubePlayer || !track || !track.videoId) return false;
+  try {
+    const data = youtubePlayer.getVideoData ? youtubePlayer.getVideoData() : null;
+    const loadedVideoId = data && data.video_id ? String(data.video_id) : "";
+    if (loadedVideoId && loadedVideoId !== track.videoId) return false;
+    const playerState = window.YT && window.YT.PlayerState;
+    const stateCode = youtubePlayer.getPlayerState ? youtubePlayer.getPlayerState() : null;
+    if (playerState && (stateCode === playerState.CUED || stateCode === playerState.PAUSED)) return true;
+    const duration = youtubePlayer.getDuration ? Number(youtubePlayer.getDuration()) : 0;
+    return Number.isFinite(duration) && duration > 0 && (!playerState || stateCode !== playerState.UNSTARTED);
+  } catch (error) {
+    return false;
+  }
+}
+
 function syncYouTube(track, force, clipElapsed) {
   audio.pause();
   const timing = desiredSourceTime(track, Number.isFinite(clipElapsed) ? clipElapsed : estimatedElapsed());
@@ -2466,6 +2482,7 @@ function syncYouTube(track, force, clipElapsed) {
         lastYouTubeSegment = timing.segment;
       }
       youtubePlayer.pauseVideo();
+      if (youtubeReadyForTrack(track)) reportMediaReady(track);
       return;
     }
 

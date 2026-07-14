@@ -112,7 +112,6 @@ function combinedAnimeTitle(englishTitle, romajiTitle, fallback) {
   const romaji = cleanAnimeTitlePart(romajiTitle) || fallbackParts.romajiTitle || english;
   const safeEnglish = english || romaji || "Anime bez nazwy";
   const safeRomaji = romaji || safeEnglish;
-  if (normalizeAnswer(safeEnglish) === normalizeAnswer(safeRomaji)) return safeEnglish;
   return safeEnglish + " / " + safeRomaji;
 }
 

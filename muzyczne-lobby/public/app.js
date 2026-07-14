@@ -1572,16 +1572,13 @@ function renderSoloDayStreak() {
   if (appShell) appShell.classList.toggle("solo-streak-visible", show);
   if (!show) return;
 
-  const soloState = state && state.solo ? state.solo : {};
-  const profileStats = state && state.soloProfile ? state.soloProfile : {};
-  const streak = Math.max(0, Number(profileStats.todayStreak || 0));
-  const todayBest = Math.max(streak, Math.max(0, Number(profileStats.todayBestStreak || 0)));
-  const todayGuessed = Math.max(0, Number(profileStats.todayGuessed || soloState.todayGuessed || 0));
-  const todayAttempts = Math.max(0, Number(profileStats.todayAttempts || soloState.todayAttempts || 0));
+  const champion = state && state.soloDayChampion ? state.soloDayChampion : {};
+  const streak = Math.max(0, Number(champion.streak || 0));
 
   soloDayStreakValue.textContent = String(streak);
-  soloDayBestValue.textContent = String(todayBest);
-  soloDayScoreValue.textContent = todayGuessed + "/" + todayAttempts;
+  soloDayBestValue.textContent = champion.nickname || "Brak wyniku";
+  soloDayBestValue.title = champion.nickname || "Brak wyniku";
+  soloDayScoreValue.textContent = "00:00-23:59";
   soloDayStreakCard.classList.toggle("is-hot", streak >= 3);
 }
 
@@ -1649,8 +1646,6 @@ function renderSoloPracticeScore() {
   const guessed = Boolean(state.solo && state.solo.guessed);
   const streak = Math.max(0, Number((state.solo && state.solo.streak) || 0));
   const bestStreak = Math.max(0, Number(profileStats.bestStreak || soloState.bestStreak || streak || 0));
-  const todayGuessed = Number(profileStats.todayGuessed || soloState.todayGuessed || 0);
-  const todayAttempts = Number(profileStats.todayAttempts || soloState.todayAttempts || 0);
   const card = node("div", "solo-summary-card tournament-card");
   card.classList.toggle("solo-answer-correct", Boolean(answered && guessed));
   card.classList.toggle("solo-answer-wrong", Boolean(answered && !guessed));
@@ -1678,10 +1673,7 @@ function renderSoloPracticeScore() {
   card.append(head);
 
   const miniStats = node("div", "solo-mini-stats");
-  miniStats.append(
-    soloMiniStat("Rekord", String(bestStreak)),
-    soloMiniStat("Dzisiaj", todayGuessed + "/" + todayAttempts)
-  );
+  miniStats.append(soloMiniStat("Rekord", String(bestStreak)));
   if (daily.active) miniStats.append(soloMiniStat("Daily", Number(daily.guessed || 0) + "/" + Number(daily.total || 0)));
   card.append(miniStats);
 

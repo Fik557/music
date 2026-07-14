@@ -145,7 +145,7 @@ h2 {
   color: #fff;
   background:
     linear-gradient(180deg, rgba(18, 12, 18, 0.18), rgba(18, 12, 18, 0.9)),
-    url("/assets/anime-quiz-hero.png?v=2") center / cover;
+    url("/assets/anime-quiz-hero.jpg?v=4") center / cover;
 }
 
 .admin-entry,
@@ -2419,7 +2419,7 @@ body[data-view="login"] .shell {
   padding: 38px;
   background:
     linear-gradient(180deg, rgba(10, 9, 12, 0.08) 35%, rgba(10, 9, 12, 0.88) 100%),
-    url("/assets/anime-quiz-hero.png?v=3") center 34% / cover no-repeat;
+    url("/assets/anime-quiz-hero.jpg?v=4") center 34% / cover no-repeat;
 }
 
 .brand-copy {
@@ -2659,6 +2659,13 @@ body[data-phase="loading"] .phase-pill {
   background: var(--amber);
 }
 
+body[data-phase="countdown"] .phase-pill {
+  color: #2b1621;
+  border-color: transparent;
+  background: #f0a1c2;
+  font-size: 1rem;
+}
+
 body[data-phase="playing"] .phase-pill {
   color: #102219;
   border-color: transparent;
@@ -2740,6 +2747,29 @@ body[data-phase="ended"] .phase-pill {
   max-width: 560px;
   font-size: 0.88rem;
   line-height: 1.45;
+}
+
+.solo-preroll {
+  width: 108px;
+  height: 108px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #f0a1c2;
+  border-radius: 50%;
+  color: #fff8fb;
+  background: #2d2028;
+  box-shadow: 0 0 0 8px rgba(240, 161, 194, 0.08);
+}
+
+.solo-preroll span {
+  font-size: 3.4rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.solo-preroll.waiting span {
+  font-size: 2.1rem;
+  letter-spacing: 0;
 }
 
 .solo-controls {
@@ -2971,9 +3001,134 @@ body[data-phase="ended"] .phase-pill {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
 }
 
+.shell.solo-streak-visible {
+  width: min(1480px, calc(100% - 40px));
+}
+
+.grid.solo-streak-visible {
+  grid-template-columns: 190px minmax(0, 1fr) 300px;
+}
+
+.solo-day-streak-card {
+  position: sticky;
+  top: 22px;
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 18px;
+  background: var(--panel);
+}
+
+.solo-day-streak-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.solo-day-streak-head > div {
+  min-width: 0;
+}
+
+.solo-day-streak-head .eyebrow {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.solo-day-streak-head strong {
+  display: block;
+  margin-top: 5px;
+  color: #fff8fb;
+  font-size: 2.8rem;
+  line-height: 0.9;
+}
+
+.solo-day-flame {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #5a4651;
+  border-radius: 8px;
+  background: #211a20;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.solo-day-streak-card.is-hot .solo-day-flame {
+  border-color: #dba95c;
+  background: #33251f;
+  animation: soloFlamePulse 1.8s ease-in-out infinite;
+}
+
+.solo-day-streak-stats {
+  display: grid;
+  gap: 12px;
+}
+
+.solo-day-streak-stats > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.solo-day-streak-stats span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.solo-day-streak-stats strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+@keyframes soloFlamePulse {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .solo-day-streak-card.is-hot .solo-day-flame {
+    animation: none;
+  }
+}
+
 @media (max-width: 1180px) {
   .shell.admin-info-visible {
     width: min(100% - 40px, 1240px);
+  }
+
+  .shell.solo-streak-visible {
+    width: min(100% - 40px, 1240px);
+  }
+
+  .grid.solo-streak-visible {
+    grid-template-columns: minmax(0, 1fr) 280px;
+  }
+
+  .solo-day-streak-card {
+    position: static;
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr);
+    align-items: center;
+  }
+
+  .solo-day-streak-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2987,8 +3142,13 @@ body[data-phase="ended"] .phase-pill {
   }
 
   .grid,
-  .grid.admin-info-visible {
+  .grid.admin-info-visible,
+  .grid.solo-streak-visible {
     grid-template-columns: 1fr;
+  }
+
+  .solo-day-streak-card {
+    grid-column: auto;
   }
 
   .side-panel {
@@ -3045,8 +3205,13 @@ body[data-phase="ended"] .phase-pill {
 
   .play-surface,
   .side-panel,
+  .solo-day-streak-card,
   .mod-section {
     padding: 18px;
+  }
+
+  .solo-day-streak-card {
+    grid-template-columns: 1fr;
   }
 
   .play-surface {

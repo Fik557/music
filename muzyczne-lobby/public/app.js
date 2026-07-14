@@ -1246,9 +1246,9 @@ function render() {
   renderAdminAnimeCard();
   phaseLabel.textContent = phaseText(state.phase);
   scoreWindowLabel.textContent = scoreWindowText();
-  peopleCount.textContent = profile && profile.role === "solo"
-    ? ""
-    : state.people.length + " osob";
+  const soloProfileView = Boolean(profile && profile.role === "solo");
+  peopleCount.textContent = soloProfileView ? "" : state.people.length + " osob";
+  peopleCount.classList.toggle("hidden", soloProfileView);
   if (peopleSection) peopleSection.classList.toggle("hidden", Boolean(profile && profile.role === "solo"));
   if (peopleTitle) peopleTitle.textContent = "Osoby";
 
@@ -1405,78 +1405,87 @@ function animeHintForTrack(track) {
 }
 
 function renderSoloPracticeScore() {
-  if (scoreTitle) scoreTitle.textContent = "Streak";
   const track = state.currentTrack;
   const soloState = state.solo || {};
   const profileStats = state.soloProfile || {};
   const daily = state.soloDaily || {};
+  if (scoreTitle) scoreTitle.textContent = daily.active ? "Daily 10" : "Solo";
   if (soloRandomButton) soloRandomButton.classList.toggle("active", !daily.active);
   if (soloDailyButton) soloDailyButton.classList.toggle("active", Boolean(daily.active));
+  const answered = Boolean(state.solo && state.solo.answered);
+  const guessed = Boolean(state.solo && state.solo.guessed);
+  const streak = Math.max(0, Number((state.solo && state.solo.streak) || 0));
+  const bestStreak = Math.max(0, Number(profileStats.bestStreak || soloState.bestStreak || streak || 0));
+  const todayGuessed = Number(profileStats.todayGuessed || soloState.todayGuessed || 0);
+  const todayAttempts = Number(profileStats.todayAttempts || soloState.todayAttempts || 0);
+  const card = node("div", "solo-summary-card tournament-card");
+  card.classList.toggle("solo-answer-correct", Boolean(answered && guessed));
+  card.classList.toggle("solo-answer-wrong", Boolean(answered && !guessed));
+  card.classList.toggle("solo-daily-active", Boolean(daily.active));
 
   if (!track) {
     const message = daily.active && daily.completed
       ? "Daily 10 ukonczone na dzisiaj."
       : "Brak openingow do losowania.";
-    scoreboard.append(node("p", "muted empty-row", message));
+    card.append(node("b", "solo-summary-empty", message));
+    scoreboard.append(card);
     return;
   }
 
-  const answered = Boolean(state.solo && state.solo.answered);
-  const guessed = Boolean(state.solo && state.solo.guessed);
-  const streak = Math.max(0, Number((state.solo && state.solo.streak) || 0));
-  const row = node("div", "score-row tournament-card solo-score-row own-player");
-  row.classList.toggle("solo-answer-correct", Boolean(answered && guessed));
-  row.classList.toggle("solo-answer-wrong", Boolean(answered && !guessed));
-  const meta = node("div", "person-meta score-meta");
+  const head = node("div", "solo-summary-head");
+  const copy = node("div", "solo-summary-copy");
   const title = answered
     ? (guessed ? "Zgadniete" : "Nie zgadniete")
-    : "Streak";
+    : (daily.active ? "Daily 10" : "Streak");
   const detail = answered && state.solo.answerText
     ? "Wybrano: " + state.solo.answerText
-    : (answered ? "Odpowiedz zapisana" : streak + " zgadnietych z rzedu");
-  meta.append(node("b", "", title), node("span", "", detail));
-  const scoreValue = node("div", "score-value solo-answer-state");
-  scoreValue.append(node("strong", "", String(streak)));
-  row.append(meta, scoreValue);
-  scoreboard.append(row);
+    : (answered ? "Odpowiedz zapisana" : (daily.active ? "Ten sam zestaw przez 24h" : streak + " zgadnietych z rzedu"));
+  copy.append(node("b", "", title), node("span", "", detail));
+  head.append(copy, node("strong", "solo-summary-value", String(streak)));
+  card.append(head);
 
-  const bestRow = node("div", "score-row tournament-card solo-score-row");
-  const bestMeta = node("div", "person-meta score-meta");
-  bestMeta.append(
-    node("b", "", "Rekord"),
-    node("span", "", "dzisiaj: " + Number(profileStats.todayGuessed || soloState.todayGuessed || 0) + "/" + Number(profileStats.todayAttempts || soloState.todayAttempts || 0))
+  const miniStats = node("div", "solo-mini-stats");
+  miniStats.append(
+    soloMiniStat("Rekord", String(bestStreak)),
+    soloMiniStat("Dzisiaj", todayGuessed + "/" + todayAttempts)
   );
-  const bestValue = node("div", "score-value");
-  bestValue.append(node("strong", "", String(Number(profileStats.bestStreak || soloState.bestStreak || streak || 0))));
-  bestRow.append(bestMeta, bestValue);
-  scoreboard.append(bestRow);
+  if (daily.active) miniStats.append(soloMiniStat("Daily", Number(daily.guessed || 0) + "/" + Number(daily.total || 0)));
+  card.append(miniStats);
 
   if (daily.active) {
-    const dailyRow = node("div", "score-row tournament-card solo-score-row daily-score-row");
-    const dailyMeta = node("div", "person-meta score-meta");
-    dailyMeta.append(
-      node("b", "", "Daily 10"),
-      node("span", "", Number(daily.guessed || 0) + "/" + Number(daily.attempts || 0) + " / zostalo: " + Number(daily.remaining || 0))
-    );
-    const dailyValue = node("div", "score-value");
-    dailyValue.append(node("strong", "", String(Number(daily.total || 0))));
-    dailyRow.append(dailyMeta, dailyValue);
-    scoreboard.append(dailyRow);
+    const total = Math.max(1, Number(daily.total || 10));
+    const done = Math.max(0, total - Number(daily.remaining || 0));
+    const progress = node("div", "solo-daily-progress");
+    const progressText = node("div", "solo-daily-text");
+    progressText.append(node("b", "", "Daily 10"), node("span", "", done + "/" + total + " / zostalo: " + Number(daily.remaining || 0)));
+    const bar = node("div", "solo-daily-bar");
+    const fill = node("span", "solo-daily-fill");
+    fill.style.width = Math.max(0, Math.min(100, (done / total) * 100)) + "%";
+    bar.append(fill);
+    progress.append(progressText, bar);
+    card.append(progress);
   }
 
-  const history = Array.isArray(profileStats.history) ? profileStats.history.slice(0, 4) : [];
+  const history = Array.isArray(profileStats.history) ? profileStats.history.slice(0, 3) : [];
   if (history.length) {
-    const historyBox = node("div", "solo-history-list");
+    const historyBox = node("div", "solo-compact-history");
     history.forEach(function (item) {
-      const itemRow = node("div", "solo-history-row " + (item.guessed ? "correct" : "wrong"));
+      const itemRow = node("div", "solo-compact-history-row " + (item.guessed ? "correct" : "wrong"));
       itemRow.append(
         node("b", "", item.guessed ? "OK" : "X"),
         node("span", "", item.anime || "Anime")
       );
       historyBox.append(itemRow);
     });
-    scoreboard.append(historyBox);
+    card.append(historyBox);
   }
+  scoreboard.append(card);
+}
+
+function soloMiniStat(label, value) {
+  const stat = node("div", "solo-mini-stat");
+  stat.append(node("span", "", label), node("strong", "", value));
+  return stat;
 }
 
 function renderScores() {

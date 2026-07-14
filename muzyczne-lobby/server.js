@@ -823,22 +823,50 @@ function dailySoloDay(day) {
   const store = dailySoloStore();
   const key = rawText(day || dayKey(now()), 20);
   if (!store.days[key] || typeof store.days[key] !== "object" || Array.isArray(store.days[key])) {
-    store.days[key] = { day: key, players: {}, createdAt: now() };
+    store.days[key] = { day: key, players: {}, trackKeys: [], createdAt: now() };
   }
   if (!store.days[key].players || typeof store.days[key].players !== "object" || Array.isArray(store.days[key].players)) {
     store.days[key].players = {};
+  }
+  if (!Array.isArray(store.days[key].trackKeys)) {
+    store.days[key].trackKeys = [];
   }
   return store.days[key];
 }
 
 function dailySoloTracks(socket, tracks) {
   const day = dayKey(now());
-  const available = availableSoloTracks(socket, tracks);
-  return available.slice().sort(function (a, b) {
+  const daily = dailySoloDay(day);
+  const byKey = {};
+  (tracks || []).forEach(function (track) {
+    byKey[soloTrackKey(track)] = track;
+  });
+  if (daily.trackKeys.length) {
+    const storedTracks = daily.trackKeys.map(function (key) {
+      return byKey[key];
+    }).filter(Boolean);
+    if (storedTracks.length) return storedTracks;
+  }
+
+  const stats = soloStatsStore();
+  let available = (tracks || []).filter(function (track) {
+    const stat = stats[soloTrackKey(track)] || {};
+    return !stat.disabled
+      && stat.qualityStatus !== "needs_fix"
+      && !(stat.mediaError && stat.qualityStatus !== "verified");
+  });
+  if (!available.length) available = tracks || [];
+  const selected = available.slice().sort(function (a, b) {
     const ak = crypto.createHash("sha1").update(day + "|" + soloTrackKey(a)).digest("hex");
     const bk = crypto.createHash("sha1").update(day + "|" + soloTrackKey(b)).digest("hex");
     return ak.localeCompare(bk);
   }).slice(0, Math.min(DAILY_SOLO_ROUND_COUNT, available.length));
+  if (selected.length) {
+    daily.trackKeys = selected.map(soloTrackKey);
+    daily.tracksCreatedAt = now();
+    savePersistedRooms();
+  }
+  return selected;
 }
 
 function dailyPlayerEntry(socket, day) {
@@ -854,12 +882,16 @@ function dailyPlayerEntry(socket, day) {
       streak: 0,
       bestStreak: 0,
       completed: false,
+      skippedKeys: {},
       history: []
     };
   }
   daily.players[clientId].nickname = cleanText((socket && socket.nickname) || daily.players[clientId].nickname, "Solo", 60);
   daily.players[clientId].avatar = cleanAvatar((socket && socket.avatar) || daily.players[clientId].avatar);
   if (!Array.isArray(daily.players[clientId].history)) daily.players[clientId].history = [];
+  if (!daily.players[clientId].skippedKeys || typeof daily.players[clientId].skippedKeys !== "object" || Array.isArray(daily.players[clientId].skippedKeys)) {
+    daily.players[clientId].skippedKeys = {};
+  }
   return daily.players[clientId];
 }
 
@@ -895,10 +927,13 @@ function publicDailySoloForSocket(socket) {
   const clientId = rawText(socket && socket.clientId, 80) || (socket && socket.id) || "solo";
   const player = socket && socket.soloMode === "daily"
     ? dailyPlayerEntry(socket, day)
-    : (daily.players[clientId] || { attempts: 0, guessed: 0, history: [] });
+    : (daily.players[clientId] || { attempts: 0, guessed: 0, history: [], skippedKeys: {} });
   const answeredKeys = {};
   (Array.isArray(player.history) ? player.history : []).forEach(function (item) {
     if (item && item.trackKey) answeredKeys[item.trackKey] = true;
+  });
+  Object.keys(player.skippedKeys || {}).forEach(function (key) {
+    answeredKeys[key] = true;
   });
   const remaining = tracks.filter(function (track) {
     return !answeredKeys[soloTrackKey(track)];
@@ -922,6 +957,9 @@ function nextDailySoloTrack(socket, tracks) {
   const answeredKeys = {};
   player.history.forEach(function (item) {
     if (item && item.trackKey) answeredKeys[item.trackKey] = true;
+  });
+  Object.keys(player.skippedKeys || {}).forEach(function (key) {
+    answeredKeys[key] = true;
   });
   const nextTrack = dailyTracks.find(function (track) {
     return !answeredKeys[soloTrackKey(track)];
@@ -2530,6 +2568,15 @@ function failSoloMedia(socket, reason) {
   const key = soloTrackKey(session.track);
   if (!socket.soloLoadFailures) socket.soloLoadFailures = {};
   if (key) socket.soloLoadFailures[key] = true;
+  if (session.daily && key) {
+    const dailyPlayer = dailyPlayerEntry(socket, dayKey(now()));
+    dailyPlayer.skippedKeys[key] = {
+      at: now(),
+      reason: cleanReason
+    };
+    dailyPlayer.updatedAt = now();
+    savePersistedRooms();
+  }
   const permanentError = /youtube|kod|blokuje|nie ma poprawnego id|krotszy niz ustawiony start/i.test(cleanReason);
   if (permanentError) markSoloTrackLoadError(session.track, cleanReason);
 
@@ -2629,7 +2676,8 @@ function recordSoloAnswer(socket, guessed, answerText) {
         guessed: session.guessed
       });
       const totalDailyTracks = dailySoloTracks(socket, allSoloTracks()).length;
-      dailyPlayer.completed = totalDailyTracks > 0 && dailyPlayer.history.length >= totalDailyTracks;
+      const skippedCount = Object.keys(dailyPlayer.skippedKeys || {}).length;
+      dailyPlayer.completed = totalDailyTracks > 0 && dailyPlayer.history.length + skippedCount >= totalDailyTracks;
       dailyPlayer.updatedAt = now();
     }
   }

@@ -255,6 +255,17 @@ function node(tag, className, text) {
   return element;
 }
 
+function setDocumentView(view) {
+  document.body.dataset.view = view || "login";
+}
+
+function profileViewName(currentProfile) {
+  if (!currentProfile) return "login";
+  if (currentProfile.role === "moderator") return "moderator";
+  if (currentProfile.role === "solo") return "solo";
+  return "player";
+}
+
 function normalizeAnswerText(value) {
   return String(value || "")
     .normalize("NFD")
@@ -587,6 +598,7 @@ function updatePlayerModeFields() {
 function showAppForProfile() {
   loginView.classList.add("hidden");
   appView.classList.remove("hidden");
+  setDocumentView(profileViewName(profile));
   moderatorPanel.classList.toggle("hidden", profile.role !== "moderator");
   roleLabel.textContent = profile.role === "moderator" ? "♛ administrator" : profile.nickname + (profile.playMode === "solo" ? "" : " / " + profile.team);
   if (profile.role === "solo") roleLabel.textContent = "granie solo";
@@ -596,6 +608,8 @@ function showAppForProfile() {
 
 function setLoginMode(mode) {
   loginMode = mode;
+  setDocumentView("login");
+  document.body.dataset.loginMode = mode;
   const isSoloLanding = mode === "solo";
   const isAdmin = mode === "moderator";
   const isPlayer = mode === "player";
@@ -781,6 +795,7 @@ function join(role) {
   saveSession();
   loginView.classList.add("hidden");
   appView.classList.remove("hidden");
+  setDocumentView(profileViewName(profile));
   moderatorPanel.classList.toggle("hidden", role !== "moderator");
   roleLabel.textContent = role === "moderator" ? "♛ administrator" : nickname + (playMode === "solo" ? "" : " / " + team);
   if (role === "solo") roleLabel.textContent = "granie solo";
@@ -804,6 +819,7 @@ function returnToLogin(message) {
   if (socket) socket.close();
   appView.classList.add("hidden");
   loginView.classList.remove("hidden");
+  setDocumentView("login");
   moderatorPanel.classList.add("hidden");
   copyLinkButton.classList.remove("hidden");
   resetTrackForm();
@@ -1303,6 +1319,7 @@ function renderAnswerCountdown() {
 function render() {
   if (!state) return;
 
+  document.body.dataset.phase = state.phase || "ready";
   roomCodeLabel.textContent = state.code;
   renderTrackHeader();
   renderAdminAnimeCard();

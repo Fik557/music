@@ -21,7 +21,7 @@
         </div>
 
         <form class="login-form" id="loginForm">
-          <div>
+          <div class="login-intro">
             <p class="eyebrow" id="loginModeLabel">gracz</p>
             <h2 id="loginTitle">Dolacz do gry</h2>
           </div>
@@ -86,19 +86,22 @@
 
           <button class="primary" id="loginSubmitButton" type="submit">Wejdz jako gracz</button>
           <button class="solo-login-card" id="soloLoginButton" type="button">
-            <span>Granie solo</span>
-            <small>Losowy opening, odpowiedz i procenty piosenek</small>
+            <span class="solo-login-copy">
+              <strong>Granie solo</strong>
+              <small>Rozpoznawaj openingi we wlasnym tempie</small>
+            </span>
+            <span class="solo-login-arrow" aria-hidden="true">&#8594;</span>
           </button>
         </form>
       </section>
 
       <section class="app-view hidden" id="appView">
         <header class="topbar">
-          <div>
+          <div class="topbar-brand">
             <p class="eyebrow" id="roleLabel">gracz</p>
             <h1>Anime Opening Quiz</h1>
           </div>
-          <div class="room-tools">
+          <div class="room-tools" aria-label="Ustawienia pokoju">
             <label class="volume-control" title="Glosnosc strony">
               <span>Glosnosc</span>
               <input id="volumeSlider" type="range" min="0" max="100" step="1" value="100" aria-label="Glosnosc strony" />
@@ -131,7 +134,7 @@
                 <h2 id="trackTitle">Brak openingu</h2>
                 <p id="trackArtist" class="muted">Administrator dodaje anime i opening w panelu.</p>
               </div>
-              <span class="phase-pill" id="phaseLabel">gotowe</span>
+              <span class="phase-pill" id="phaseLabel" aria-live="polite">gotowe</span>
             </div>
 
             <div class="progress-wrap" aria-label="Postep fragmentu">
@@ -151,17 +154,19 @@
               <button class="buzzer" id="buzzButton" type="button">Zgaduje!</button>
               <p class="buzz-caption" id="buzzCaption">Czeka na start rundy.</p>
               <div class="solo-controls hidden" id="soloControls">
+                <div class="solo-mode-switch" aria-label="Tryb gry solo">
+                  <button class="solo-mode-button active" id="soloRandomButton" type="button">Losowo</button>
+                  <button class="solo-mode-button" id="soloDailyButton" type="button">Daily 10</button>
+                </div>
                 <form class="solo-answer-form" id="soloAnswerForm">
                   <input id="soloAnswerInput" list="soloAnswerOptions" placeholder="Wpisz anime" aria-label="Odpowiedz anime" autocomplete="off" />
-                  <button class="primary" id="soloAnswerSubmitButton" type="submit">Zaznacz</button>
+                  <button class="primary" id="soloAnswerSubmitButton" type="submit">Sprawdz</button>
                 </form>
                 <datalist id="soloAnswerOptions"></datalist>
                 <div class="solo-action-row">
-                  <button class="solo-mode-button active" id="soloRandomButton" type="button">Losowo</button>
-                  <button class="solo-mode-button" id="soloDailyButton" type="button">Daily 10</button>
                   <button class="primary hidden" id="soloGuessedButton" type="button">Zgadlem</button>
                   <button id="soloMissedButton" type="button">Nie zgadlem</button>
-                  <button id="soloNextButton" type="button">Nastepny</button>
+                  <button id="soloNextButton" type="button">Nastepny opening</button>
                 </div>
                 <details class="solo-report" id="soloReportPanel">
                   <summary>Zglos blad</summary>

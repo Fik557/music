@@ -3105,8 +3105,14 @@ body[data-phase="ended"] .phase-pill {
 }
 
 .solo-day-streak-stats strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   color: var(--ink);
   font-size: 1rem;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes soloFlamePulse {

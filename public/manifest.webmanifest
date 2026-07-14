@@ -1,0 +1,19 @@
+{
+  "name": "Anime Opening Quiz",
+  "short_name": "Opening Quiz",
+  "description": "Anime opening quiz z trybem solo, lobby i panelem administratora.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#17121b",
+  "theme_color": "#17121b",
+  "icons": [
+    {
+      "src": "/assets/anime-quiz-icon.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}
+

@@ -102,6 +102,7 @@ const trackUrlInput = $("#trackUrlInput");
 const trackStartFirstInput = $("#trackStartFirstInput");
 const trackStartSecondInput = $("#trackStartSecondInput");
 const localAudioSelect = $("#localAudioSelect");
+const fallbackAudioSelect = $("#fallbackAudioSelect");
 const audioUploadInput = $("#audioUploadInput");
 const audioUploadButton = $("#audioUploadButton");
 const audioUploadStatus = $("#audioUploadStatus");
@@ -151,8 +152,19 @@ const adminRoomList = $("#adminRoomList");
 const adminRoomsCount = $("#adminRoomsCount");
 const adminReportList = $("#adminReportList");
 const adminReportsCount = $("#adminReportsCount");
+const adminCenterPhase = $("#adminCenterPhase");
+const adminCenterGrid = $("#adminCenterGrid");
+const adminSoloPlayersList = $("#adminSoloPlayersList");
+const adminSoloPlayersCount = $("#adminSoloPlayersCount");
+const adminQualityList = $("#adminQualityList");
+const adminQualityCount = $("#adminQualityCount");
 const statsSortDescButton = $("#statsSortDescButton");
 const statsSortAscButton = $("#statsSortAscButton");
+const statsSortHardestButton = $("#statsSortHardestButton");
+const exportDataButton = $("#exportDataButton");
+const importDataInput = $("#importDataInput");
+const importDataButton = $("#importDataButton");
+const backupStatus = $("#backupStatus");
 
 const scoreInputs = {
   very_easy: { first: $("#scoreVeryEasyFirst"), second: $("#scoreVeryEasySecond") },
@@ -194,7 +206,7 @@ let avatarData = "";
 let avatarCropSource = null;
 let buzzerAudioContext = null;
 let lastBuzzerSoundKey = "";
-let activeAdminPanel = "tracks";
+let activeAdminPanel = "center";
 let lastSoloAnswerTrackId = "";
 let lastSoloReportTrackId = "";
 let adminStatsSort = "desc";
@@ -621,6 +633,7 @@ function connect() {
       if (youtubeSearchButton) youtubeSearchButton.disabled = false;
       if (audioUploadButton) audioUploadButton.disabled = false;
       if (soloReportSubmitButton) soloReportSubmitButton.disabled = false;
+      if (importDataButton) importDataButton.disabled = false;
       if (playlistImportStatus) playlistImportStatus.textContent = payload.message;
       if (audioUploadStatus) audioUploadStatus.textContent = payload.message;
       showToast(payload.message);
@@ -924,7 +937,7 @@ if (adminPanelTabs) {
   adminPanelTabs.addEventListener("click", function (event) {
     const button = event.target.closest("[data-admin-panel-target]");
     if (!button) return;
-    activeAdminPanel = button.dataset.adminPanelTarget || "tracks";
+    activeAdminPanel = button.dataset.adminPanelTarget || "center";
     renderAdminPanelTabs();
   });
 }
@@ -943,6 +956,74 @@ if (statsSortAscButton) {
   });
 }
 
+if (statsSortHardestButton) {
+  statsSortHardestButton.addEventListener("click", function () {
+    adminStatsSort = "hardest";
+    renderAdminSoloStats();
+  });
+}
+
+if (exportDataButton) {
+  exportDataButton.addEventListener("click", async function () {
+    if (!profile || profile.role !== "moderator") return;
+    try {
+      exportDataButton.disabled = true;
+      if (backupStatus) backupStatus.textContent = "Tworzenie backupu...";
+      const url = "/api/export-data?moderatorPassword=" + encodeURIComponent(profile.moderatorPassword || "");
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Nie udalo sie pobrac backupu.");
+      const blob = await response.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "anime-opening-quiz-backup.json";
+      document.body.append(link);
+      link.click();
+      URL.revokeObjectURL(link.href);
+      link.remove();
+      if (backupStatus) backupStatus.textContent = "Backup pobrany.";
+      showToast("Backup danych pobrany.");
+    } catch (error) {
+      if (backupStatus) backupStatus.textContent = error && error.message ? error.message : "Nie udalo sie pobrac backupu.";
+      showToast(error && error.message ? error.message : "Nie udalo sie pobrac backupu.");
+    } finally {
+      exportDataButton.disabled = false;
+    }
+  });
+}
+
+if (importDataButton) {
+  importDataButton.addEventListener("click", async function () {
+    if (!profile || profile.role !== "moderator") return;
+    const file = importDataInput && importDataInput.files && importDataInput.files[0];
+    if (!file) return showToast("Wybierz plik JSON z backupem.");
+    try {
+      importDataButton.disabled = true;
+      if (backupStatus) backupStatus.textContent = "Importowanie danych...";
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const response = await fetch("/api/import-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          moderatorPassword: profile.moderatorPassword || "",
+          data: data
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.error) throw new Error(payload.error || "Nie udalo sie zaimportowac danych.");
+      if (importDataInput) importDataInput.value = "";
+      if (backupStatus) backupStatus.textContent = payload.message || "Dane zaimportowane.";
+      showToast(payload.message || "Dane zaimportowane.");
+      mod("refresh");
+    } catch (error) {
+      if (backupStatus) backupStatus.textContent = error && error.message ? error.message : "Nie udalo sie zaimportowac danych.";
+      showToast(error && error.message ? error.message : "Nie udalo sie zaimportowac danych.");
+    } finally {
+      importDataButton.disabled = false;
+    }
+  });
+}
+
 trackForm.addEventListener("submit", function (event) {
   event.preventDefault();
   const payload = {
@@ -951,6 +1032,7 @@ trackForm.addEventListener("submit", function (event) {
       opening: trackOpeningInput.value,
       difficulty: trackDifficultyInput.value,
       audioUrl: trackUrlInput.value,
+      fallbackAudioUrl: fallbackAudioSelect ? fallbackAudioSelect.value : "",
       startAtFirst: Number(trackStartFirstInput.value || 0),
       startAtSecond: Number(trackStartSecondInput.value || 5),
       coverUrl: trackCoverInput.value,
@@ -1172,16 +1254,25 @@ function render() {
 }
 
 function renderLocalAudioFiles() {
-  if (!localAudioSelect || !profile || profile.role !== "moderator") return;
-  const currentValue = localAudioSelect.value || trackUrlInput.value;
+  if ((!localAudioSelect && !fallbackAudioSelect) || !profile || profile.role !== "moderator") return;
+  const currentValue = localAudioSelect ? (localAudioSelect.value || trackUrlInput.value) : "";
+  const fallbackValue = fallbackAudioSelect ? fallbackAudioSelect.value : "";
   const files = state.localAudioFiles || [];
-  localAudioSelect.replaceChildren();
-  localAudioSelect.append(new Option("Lokalne audio", ""));
+  if (localAudioSelect) {
+    localAudioSelect.replaceChildren();
+    localAudioSelect.append(new Option("Lokalne audio", ""));
+  }
+  if (fallbackAudioSelect) {
+    fallbackAudioSelect.replaceChildren();
+    fallbackAudioSelect.append(new Option("Awaryjne audio", ""));
+  }
   files.forEach(function (file) {
     const label = file.name + (file.size ? " · " + Math.round(file.size / 1024 / 1024 * 10) / 10 + " MB" : "");
-    localAudioSelect.append(new Option(label, file.url));
+    if (localAudioSelect) localAudioSelect.append(new Option(label, file.url));
+    if (fallbackAudioSelect) fallbackAudioSelect.append(new Option(label, file.url));
   });
-  localAudioSelect.value = files.some((file) => file.url === currentValue) ? currentValue : "";
+  if (localAudioSelect) localAudioSelect.value = files.some((file) => file.url === currentValue) ? currentValue : "";
+  if (fallbackAudioSelect) fallbackAudioSelect.value = files.some((file) => file.url === fallbackValue) ? fallbackValue : "";
 }
 
 function renderTrackHeader() {
@@ -1302,6 +1393,8 @@ function animeHintForTrack(track) {
 function renderSoloPracticeScore() {
   if (scoreTitle) scoreTitle.textContent = "Streak";
   const track = state.currentTrack;
+  const soloState = state.solo || {};
+  const profileStats = state.soloProfile || {};
 
   if (!track) {
     scoreboard.append(node("p", "muted empty-row", "Brak openingow do losowania."));
@@ -1326,6 +1419,31 @@ function renderSoloPracticeScore() {
   scoreValue.append(node("strong", "", String(streak)));
   row.append(meta, scoreValue);
   scoreboard.append(row);
+
+  const bestRow = node("div", "score-row tournament-card solo-score-row");
+  const bestMeta = node("div", "person-meta score-meta");
+  bestMeta.append(
+    node("b", "", "Rekord"),
+    node("span", "", "dzisiaj: " + Number(profileStats.todayGuessed || soloState.todayGuessed || 0) + "/" + Number(profileStats.todayAttempts || soloState.todayAttempts || 0))
+  );
+  const bestValue = node("div", "score-value");
+  bestValue.append(node("strong", "", String(Number(profileStats.bestStreak || soloState.bestStreak || streak || 0))));
+  bestRow.append(bestMeta, bestValue);
+  scoreboard.append(bestRow);
+
+  const history = Array.isArray(profileStats.history) ? profileStats.history.slice(0, 4) : [];
+  if (history.length) {
+    const historyBox = node("div", "solo-history-list");
+    history.forEach(function (item) {
+      const itemRow = node("div", "solo-history-row " + (item.guessed ? "correct" : "wrong"));
+      itemRow.append(
+        node("b", "", item.guessed ? "OK" : "X"),
+        node("span", "", item.anime || "Anime")
+      );
+      historyBox.append(itemRow);
+    });
+    scoreboard.append(historyBox);
+  }
 }
 
 function renderScores() {
@@ -1591,6 +1709,73 @@ function difficultySelect(value) {
   return select;
 }
 
+function qualityStatuses() {
+  const statuses = Array.isArray(state && state.qualityStatuses) ? state.qualityStatuses : [];
+  return statuses.length ? statuses : [
+    { key: "ok", label: "Dziala" },
+    { key: "slow", label: "Wolno sie laduje" },
+    { key: "reported", label: "Zgloszone" },
+    { key: "needs_fix", label: "Do poprawy" },
+    { key: "verified", label: "Sprawdzone" }
+  ];
+}
+
+function qualityLabel(value) {
+  const key = value || "ok";
+  const found = qualityStatuses().find((status) => status.key === key);
+  return found ? found.label : "Dziala";
+}
+
+function qualitySelect(value) {
+  const select = document.createElement("select");
+  qualityStatuses().forEach(function (status) {
+    const option = document.createElement("option");
+    option.value = status.key;
+    option.textContent = status.label;
+    option.selected = status.key === (value || "ok");
+    select.append(option);
+  });
+  return select;
+}
+
+function qualityPill(status, disabled) {
+  const label = disabled ? "Wylaczone" : qualityLabel(status);
+  const pill = node("span", "quality-pill quality-" + (disabled ? "disabled" : (status || "ok")), label);
+  return pill;
+}
+
+function updateSoloQuality(entry, status, disabled) {
+  if (!entry || !entry.key) return;
+  mod("updateSoloStatQuality", {
+    key: entry.key,
+    trackId: entry.trackId,
+    qualityStatus: status || entry.qualityStatus || "ok",
+    disabled: Boolean(disabled)
+  });
+}
+
+function clearSoloMediaError(entry) {
+  if (!entry || !entry.key) return;
+  mod("clearSoloMediaError", { key: entry.key, trackId: entry.trackId });
+}
+
+function editStatTrack(entry) {
+  if (!entry) return;
+  editReportedTrack({
+    trackKey: entry.key,
+    trackId: entry.trackId,
+    anime: entry.anime,
+    opening: entry.opening,
+    difficulty: entry.difficulty,
+    audioUrl: entry.audioUrl,
+    fallbackAudioUrl: entry.fallbackAudioUrl,
+    startAtFirst: entry.startAtFirst,
+    startAtSecond: entry.startAtSecond,
+    coverUrl: entry.coverUrl,
+    description: entry.description
+  });
+}
+
 function renderSearchResults() {
   if (!youtubeSearchResults) return;
   youtubeSearchResults.replaceChildren();
@@ -1731,6 +1916,181 @@ function renderAdminRooms() {
   });
 }
 
+function centerAction(label, action, className) {
+  const button = node("button", className || "", label);
+  button.type = "button";
+  button.addEventListener("click", function () {
+    mod(action);
+  });
+  return button;
+}
+
+function renderAdminCenter() {
+  if (!adminCenterGrid || !profile || profile.role !== "moderator") return;
+  const track = state.currentTrack;
+  const buzzer = state.currentBuzzer;
+  const stats = state.soloStats || [];
+  const reports = state.soloReports || [];
+  const problemCount = stats.filter((entry) => entry.mediaError || entry.disabled || entry.qualityStatus === "needs_fix" || entry.reportsCount).length;
+  adminCenterGrid.replaceChildren();
+  if (adminCenterPhase) adminCenterPhase.textContent = phaseText(state.phase);
+
+  const nowCard = node("div", "admin-center-card tournament-card");
+  const nowMeta = node("div", "track-meta");
+  nowMeta.append(
+    node("b", "", track ? (track.anime || "Anime bez nazwy") : "Brak openingu"),
+    node("span", "", track ? trackSubtitle(track) : "Dodaj albo wybierz opening.")
+  );
+  if (track) nowMeta.append(qualityPill(track.qualityStatus || "ok", false));
+  const nowActions = node("div", "admin-center-actions");
+  nowActions.append(
+    centerAction("Start", "play", "primary"),
+    centerAction("Pauza", "pause"),
+    centerAction("Dalej", "nextTrack"),
+    centerAction("Reset", "resetScores")
+  );
+  nowCard.append(nowMeta, nowActions);
+
+  const buzzCard = node("div", "admin-center-card tournament-card");
+  const buzzMeta = node("div", "track-meta");
+  buzzMeta.append(
+    node("b", "", buzzer ? buzzer.nickname : "Brak odpowiedzi"),
+    node("span", "", buzzer ? (buzzer.team + " / " + formatSeconds(buzzer.buzzedAt) + " / " + buzzer.suggestedPoints + " pkt") : "Czekam na pierwszy przycisk.")
+  );
+  const buzzActions = node("div", "admin-center-actions");
+  const guessed = node("button", "primary", "Zgadniete");
+  const rejected = node("button", "", "Bledne");
+  const resume = node("button", "", "Odpauzuj");
+  guessed.type = "button";
+  rejected.type = "button";
+  resume.type = "button";
+  guessed.disabled = !buzzer;
+  rejected.disabled = !buzzer;
+  guessed.addEventListener("click", function () { mod("guessed"); });
+  rejected.addEventListener("click", function () { mod("rejectBuzz"); });
+  resume.addEventListener("click", function () { mod("resume"); });
+  buzzActions.append(guessed, rejected, resume);
+  buzzCard.append(buzzMeta, buzzActions);
+
+  const roomCard = node("div", "admin-center-card tournament-card");
+  const players = (state.people || []).filter((person) => person.role === "player").length;
+  const groups = new Set((state.people || []).filter((person) => person.role === "player").map((person) => person.team || "Solo"));
+  const roomMeta = node("div", "track-meta");
+  roomMeta.append(
+    node("b", "", "Pokoj " + (state.code || "LOBBY")),
+    node("span", "", players + " graczy / " + groups.size + " grup / " + (state.tracks || []).length + " openingow")
+  );
+  roomCard.append(roomMeta, node("div", "admin-center-kpi", String(players)));
+
+  const qualityCard = node("div", "admin-center-card tournament-card");
+  const qualityMeta = node("div", "track-meta");
+  qualityMeta.append(
+    node("b", "", "Kontrola jakosci"),
+    node("span", "", problemCount + " do sprawdzenia / " + reports.length + " zgloszen")
+  );
+  const qualityActions = node("div", "admin-center-actions");
+  const openQuality = node("button", "", "Otworz jakosc");
+  openQuality.type = "button";
+  openQuality.addEventListener("click", function () {
+    activeAdminPanel = "quality";
+    renderAdminPanelTabs();
+  });
+  qualityActions.append(openQuality);
+  qualityCard.append(qualityMeta, qualityActions);
+
+  adminCenterGrid.append(nowCard, buzzCard, roomCard, qualityCard);
+}
+
+function renderAdminSoloPlayers() {
+  if (!adminSoloPlayersList || !adminSoloPlayersCount || !profile || profile.role !== "moderator") return;
+  const players = Array.isArray(state.soloLeaderboard) ? state.soloLeaderboard : [];
+  adminSoloPlayersList.replaceChildren();
+  adminSoloPlayersCount.textContent = players.length + " graczy";
+
+  if (!players.length) {
+    adminSoloPlayersList.append(node("p", "muted empty-row", "Brak zapisanych graczy solo."));
+    return;
+  }
+
+  players.forEach(function (player, index) {
+    const row = node("div", "score-row tournament-card solo-player-row");
+    const meta = node("div", "person-meta score-meta");
+    meta.append(
+      node("b", "", (index + 1) + ". " + (player.nickname || "Solo")),
+      node("span", "", "best streak: " + Number(player.bestStreak || 0) + " / teraz: " + Number(player.streak || 0))
+    );
+    const details = node("div", "solo-player-details");
+    details.append(
+      node("span", "", Number(player.guessed || 0) + "/" + Number(player.attempts || 0) + " zgadnietych"),
+      node("span", "", "dzisiaj: " + Number(player.todayGuessed || 0) + "/" + Number(player.todayAttempts || 0))
+    );
+    meta.append(details);
+    const scoreValue = node("div", "score-value");
+    scoreValue.append(node("strong", "", String(Number(player.percent || 0)) + "%"));
+    row.append(meta, scoreValue);
+    adminSoloPlayersList.append(row);
+  });
+}
+
+function renderAdminQuality() {
+  if (!adminQualityList || !adminQualityCount || !profile || profile.role !== "moderator") return;
+  const stats = state.soloStats || [];
+  const rows = stats.filter((entry) => entry.mediaError || entry.disabled || entry.reportsCount || entry.qualityStatus !== "ok");
+  const displayRows = rows.length ? rows : stats.slice(0, 20);
+  adminQualityList.replaceChildren();
+  adminQualityCount.textContent = rows.length ? rows.length + " do sprawdzenia" : stats.length + " sprawdzone";
+
+  if (!displayRows.length) {
+    adminQualityList.append(node("p", "muted empty-row", "Brak openingow w bibliotece."));
+    return;
+  }
+
+  displayRows.forEach(function (entry) {
+    const row = node("div", "quality-row tournament-card");
+    if (entry.mediaError || entry.qualityStatus === "needs_fix") row.classList.add("media-error");
+    const meta = node("div", "track-meta");
+    const title = [entry.anime, entry.opening].filter(Boolean).join(" / ") || "Anime bez nazwy";
+    const detail = [
+      entry.mediaError ? "blad ladowania" : "",
+      entry.reportsCount ? entry.reportsCount + " zgloszen" : "",
+      entry.disabled ? "wylaczone z solo" : "",
+      DIFFICULTY_LABELS[entry.difficulty || "medium"] || "Medium"
+    ].filter(Boolean).join(" / ");
+    meta.append(node("b", "", title), node("span", "", detail || "bez problemow"));
+    if (entry.mediaErrorReason) meta.append(node("span", "media-error-note", entry.mediaErrorReason));
+
+    const tools = node("div", "quality-tools");
+    const select = qualitySelect(entry.qualityStatus || "ok");
+    const save = node("button", "", "Zapisz");
+    const disable = node("button", entry.disabled ? "" : "danger-button", entry.disabled ? "Odblokuj solo" : "Wylacz solo");
+    const clear = node("button", "", "Wyczysc blad");
+    const edit = node("button", "", "Edytuj");
+    save.type = "button";
+    disable.type = "button";
+    clear.type = "button";
+    edit.type = "button";
+    clear.disabled = !entry.mediaError;
+    save.addEventListener("click", function () {
+      updateSoloQuality(entry, select.value, entry.disabled);
+      showToast("Zapisano status jakosci.");
+    });
+    disable.addEventListener("click", function () {
+      updateSoloQuality(entry, select.value, !entry.disabled);
+      showToast(entry.disabled ? "Opening odblokowany w solo." : "Opening wylaczony z solo.");
+    });
+    clear.addEventListener("click", function () {
+      clearSoloMediaError(entry);
+      showToast("Wyczyszczono blad ladowania.");
+    });
+    edit.addEventListener("click", function () {
+      editStatTrack(entry);
+    });
+    tools.append(qualityPill(entry.qualityStatus || "ok", entry.disabled), select, save, disable, clear, edit);
+    row.append(meta, tools);
+    adminQualityList.append(row);
+  });
+}
+
 const STATS_PERCENT_CATEGORIES = [
   { key: "very_easy", label: "Very easy", range: "100-80%", min: 80, max: 100 },
   { key: "easy", label: "Easy", range: "79-60%", min: 60, max: 79 },
@@ -1747,6 +2107,15 @@ function statsCategoryForPercent(percent) {
 
 function sortedStatsRows(stats) {
   return stats.slice().sort(function (a, b) {
+    if (adminStatsSort === "hardest") {
+      const missedDiff = Number(b.missed || 0) - Number(a.missed || 0);
+      if (missedDiff !== 0) return missedDiff;
+      const percentDiff = Number(a.percent || 0) - Number(b.percent || 0);
+      if (percentDiff !== 0) return percentDiff;
+      const attemptsDiff = Number(b.attempts || 0) - Number(a.attempts || 0);
+      if (attemptsDiff !== 0) return attemptsDiff;
+      return String(a.anime || "").localeCompare(String(b.anime || ""));
+    }
     const diff = Number(a.percent || 0) - Number(b.percent || 0);
     if (diff !== 0) return adminStatsSort === "asc" ? diff : -diff;
     const attemptsDiff = Number(a.attempts || 0) - Number(b.attempts || 0);
@@ -1762,6 +2131,7 @@ function renderAdminSoloStats() {
   adminSoloStatsCount.textContent = stats.length + " openingow";
   if (statsSortDescButton) statsSortDescButton.classList.toggle("active", adminStatsSort === "desc");
   if (statsSortAscButton) statsSortAscButton.classList.toggle("active", adminStatsSort === "asc");
+  if (statsSortHardestButton) statsSortHardestButton.classList.toggle("active", adminStatsSort === "hardest");
 
   if (!stats.length) {
     adminSoloStatsList.append(node("p", "muted empty-row", "Brak zapisanych odpowiedzi solo."));
@@ -1777,7 +2147,7 @@ function renderAdminSoloStats() {
     rowsByCategory[statsCategoryForPercent(entry.percent).key].push(entry);
   });
 
-  const categories = adminStatsSort === "asc"
+  const categories = adminStatsSort === "asc" || adminStatsSort === "hardest"
     ? STATS_PERCENT_CATEGORIES.slice().reverse()
     : STATS_PERCENT_CATEGORIES;
 
@@ -1799,6 +2169,7 @@ function renderAdminSoloStats() {
         ? entry.guessed + "/" + entry.attempts + " zgadnietych"
           + " / gry: " + Number(entry.gameAttempts || 0)
           + " / solo: " + Number(entry.soloAttempts || 0)
+          + " / pudla: " + Number(entry.missed || 0)
         : "brak odpowiedzi";
       meta.append(node("b", "", entry.anime || "Anime bez nazwy"), node("span", "", detail));
       if (entry.mediaError) {
@@ -1809,13 +2180,20 @@ function renderAdminSoloStats() {
       const difficultyTools = node("div", "stats-difficulty-control");
       const currentDifficulty = node("span", "stat-difficulty-pill", DIFFICULTY_LABELS[difficulty] || "Medium");
       const difficultyInput = difficultySelect(difficulty);
+      const qualityInput = qualitySelect(entry.qualityStatus || "ok");
       const changeDifficulty = node("button", "", "Zmien");
+      const changeQuality = node("button", "", "Jakosc");
       changeDifficulty.type = "button";
+      changeQuality.type = "button";
       changeDifficulty.addEventListener("click", function () {
         mod("updateSoloStatDifficulty", { key: entry.key, difficulty: difficultyInput.value });
         showToast("Zmieniono poziom openingu.");
       });
-      difficultyTools.append(currentDifficulty, difficultyInput, changeDifficulty);
+      changeQuality.addEventListener("click", function () {
+        updateSoloQuality(entry, qualityInput.value, entry.disabled);
+        showToast("Zapisano status jakosci.");
+      });
+      difficultyTools.append(currentDifficulty, difficultyInput, changeDifficulty, qualityPill(entry.qualityStatus || "ok", entry.disabled), qualityInput, changeQuality);
       if (entry.mediaError) scoreValue.append(node("span", "media-error-pill", "blad"));
       scoreValue.append(difficultyTools, node("strong", "", String(Number(entry.percent || 0)) + "%"));
       row.append(meta, scoreValue);
@@ -1937,6 +2315,7 @@ function editTrack(track, source) {
   trackDifficultyInput.value = track.difficulty || "medium";
   trackUrlInput.value = track.audioUrl || "";
   if (localAudioSelect) localAudioSelect.value = track.audioUrl || "";
+  if (fallbackAudioSelect) fallbackAudioSelect.value = track.fallbackAudioUrl || "";
   trackStartFirstInput.value = String(finiteNumber(track.startAtFirst, 0));
   trackStartSecondInput.value = String(finiteNumber(track.startAtSecond, 5));
   trackCoverInput.value = track.coverUrl || "";
@@ -1963,6 +2342,7 @@ function editReportedTrack(report) {
   trackDifficultyInput.value = report.difficulty || "medium";
   trackUrlInput.value = report.audioUrl || "";
   if (localAudioSelect) localAudioSelect.value = report.audioUrl || "";
+  if (fallbackAudioSelect) fallbackAudioSelect.value = report.fallbackAudioUrl || "";
   trackStartFirstInput.value = String(finiteNumber(report.startAtFirst, 0));
   trackStartSecondInput.value = String(finiteNumber(report.startAtSecond, 5));
   trackCoverInput.value = report.coverUrl || "";
@@ -1984,6 +2364,7 @@ function resetTrackForm() {
   trackDifficultyInput.value = "medium";
   trackUrlInput.value = "";
   if (localAudioSelect) localAudioSelect.value = "";
+  if (fallbackAudioSelect) fallbackAudioSelect.value = "";
   if (audioUploadInput) audioUploadInput.value = "";
   if (audioUploadStatus) audioUploadStatus.textContent = "";
   trackStartFirstInput.value = "0";
@@ -2027,7 +2408,7 @@ function renderBlockedIps() {
 function renderAdminPanelTabs() {
   if (!adminPanelButtons.length || !adminPanelSections.length) return;
   const available = adminPanelButtons.some((button) => button.dataset.adminPanelTarget === activeAdminPanel);
-  if (!available) activeAdminPanel = "tracks";
+  if (!available) activeAdminPanel = "center";
 
   adminPanelButtons.forEach(function (button) {
     const active = button.dataset.adminPanelTarget === activeAdminPanel;
@@ -2044,8 +2425,11 @@ function renderModerator() {
   if (!profile || profile.role !== "moderator") return;
   renderAdminPanelTabs();
   renderBuzzDecision();
+  renderAdminCenter();
   renderAdminRooms();
   renderAdminSoloStats();
+  renderAdminSoloPlayers();
+  renderAdminQuality();
   renderAdminReports();
 
   const settings = state.settings.difficultyScores || {};

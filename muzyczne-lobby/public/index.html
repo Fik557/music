@@ -199,14 +199,18 @@
 
         <section class="moderator-panel hidden" id="moderatorPanel">
           <nav class="admin-panel-tabs" id="adminPanelTabs" aria-label="Panel administratora">
+            <button class="admin-panel-card active" type="button" data-admin-panel-target="center">Centrum</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="rooms">Gry</button>
-            <button class="admin-panel-card active" type="button" data-admin-panel-target="tracks">Openingi</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="tracks">Openingi</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="playlist">Import playlisty</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="search">Wyszukiwarka YouTube</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="library">Biblioteka openingow</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="blocked">Zablokowane osoby</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="scoring">Punktacja poziomow</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="stats">% zgadniec</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="soloPlayers">Solo</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="quality">Jakosc</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="backup">Backup</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="reports">Zgloszenia</button>
           </nav>
 
@@ -242,6 +246,14 @@
             </div>
           </div>
 
+          <div class="mod-section admin-center-section" data-admin-panel="center">
+            <div class="panel-title">
+              <h2>Centrum turnieju</h2>
+              <span id="adminCenterPhase">gotowe</span>
+            </div>
+            <div class="admin-center-grid" id="adminCenterGrid"></div>
+          </div>
+
           <div class="mod-section rooms-section" data-admin-panel="rooms">
             <div class="panel-title">
               <h2>Gry</h2>
@@ -270,6 +282,9 @@
               <input id="trackStartSecondInput" type="number" min="0" step="0.1" value="5" title="Start fragmentu 5-15 s" aria-label="Start 5-15 s" />
               <select class="track-local-audio-select" id="localAudioSelect" title="Lokalne audio">
                 <option value="">Lokalne audio</option>
+              </select>
+              <select class="track-fallback-audio-select" id="fallbackAudioSelect" title="Awaryjne lokalne audio">
+                <option value="">Awaryjne audio</option>
               </select>
               <input class="audio-upload-input" id="audioUploadInput" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/mp4,.mp3,.wav,.ogg,.m4a" aria-label="Wgraj lokalny plik audio" />
               <button class="ghost audio-upload-button" id="audioUploadButton" type="button">Wgraj</button>
@@ -373,8 +388,38 @@
             <div class="stats-toolbar" id="adminStatsSortControls" aria-label="Sortowanie procentow">
               <button class="active" id="statsSortDescButton" type="button">Najwieksze</button>
               <button id="statsSortAscButton" type="button">Najmniejsze</button>
+              <button id="statsSortHardestButton" type="button">Najtrudniejsze</button>
             </div>
             <div class="admin-solo-stats-list" id="adminSoloStatsList"></div>
+          </div>
+
+          <div class="mod-section solo-players-section" data-admin-panel="soloPlayers">
+            <div class="panel-title">
+              <h2>Ranking solo</h2>
+              <span id="adminSoloPlayersCount">0 graczy</span>
+            </div>
+            <div class="admin-solo-players-list" id="adminSoloPlayersList"></div>
+          </div>
+
+          <div class="mod-section quality-section" data-admin-panel="quality">
+            <div class="panel-title">
+              <h2>Jakosc openingow</h2>
+              <span id="adminQualityCount">0</span>
+            </div>
+            <div class="quality-list" id="adminQualityList"></div>
+          </div>
+
+          <div class="mod-section backup-section" data-admin-panel="backup">
+            <div class="panel-title">
+              <h2>Backup danych</h2>
+              <span>export/import JSON</span>
+            </div>
+            <div class="backup-actions">
+              <button class="primary" id="exportDataButton" type="button">Eksportuj dane</button>
+              <input id="importDataInput" type="file" accept="application/json,.json" aria-label="Import danych JSON" />
+              <button id="importDataButton" type="button">Importuj dane</button>
+              <span class="muted" id="backupStatus"></span>
+            </div>
           </div>
 
           <div class="mod-section reports-section" data-admin-panel="reports">

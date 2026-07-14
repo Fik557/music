@@ -40,6 +40,14 @@ const DIFFICULTIES = [
   { key: "impossible", label: "Impossible" }
 ];
 
+const QUALITY_STATUSES = [
+  { key: "ok", label: "Dziala" },
+  { key: "slow", label: "Wolno sie laduje" },
+  { key: "reported", label: "Zgloszone" },
+  { key: "needs_fix", label: "Do poprawy" },
+  { key: "verified", label: "Sprawdzone" }
+];
+
 const DEFAULT_DIFFICULTY_SCORES = {
   very_easy: { first: 2, second: 1 },
   easy: { first: 3, second: 2 },
@@ -128,6 +136,35 @@ function cleanImageUrl(value, fallback) {
 function youtubeThumbnailUrl(videoId) {
   const clean = rawText(videoId, 40);
   return /^[A-Za-z0-9_-]{11}$/.test(clean) ? "https://i.ytimg.com/vi/" + clean + "/hqdefault.jpg" : "";
+}
+
+function cleanAudioUrl(value, fallback) {
+  const text = rawText(value || fallback, 700);
+  if (!text) return "";
+  if (text.startsWith("/music/")) return text;
+  try {
+    const url = new URL(text);
+    if (url.protocol === "http:" || url.protocol === "https:") return url.toString().slice(0, 700);
+  } catch (error) {}
+  return "";
+}
+
+function qualityExists(key) {
+  return QUALITY_STATUSES.some(function (status) {
+    return status.key === key;
+  });
+}
+
+function qualityLabel(key) {
+  const match = QUALITY_STATUSES.find(function (status) {
+    return status.key === key;
+  });
+  return match ? match.label : "Dziala";
+}
+
+function normalizeQualityStatus(value, fallback) {
+  const key = rawText(value || fallback || "ok", 40);
+  return qualityExists(key) ? key : "ok";
 }
 
 function cleanAvatar(value) {
@@ -254,7 +291,7 @@ function loadPersistedRooms() {
   for (const filePath of candidates) {
     try {
       if (!fs.existsSync(filePath)) continue;
-      return JSON.parse(fs.readFileSync(filePath, "utf8")) || {};
+      return JSON.parse(fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "")) || {};
     } catch (error) {
       console.warn("Nie udalo sie wczytac zapisanych openingow z " + filePath + ":", error.message);
     }
@@ -297,12 +334,16 @@ function restoreTracks(tracks) {
       const durationText = rawText(track.durationText, 20) || formatDurationSeconds(durationSeconds);
       const coverUrl = cleanImageUrl(track.coverUrl || track.cover || track.thumbnailUrl || track.imageUrl, youtubeThumbnailUrl(videoId));
       const description = rawText(track.description || track.animeDescription || track.summary, 420);
+      const fallbackAudioUrl = cleanAudioUrl(track.fallbackAudioUrl || track.localAudioUrl || track.backupAudioUrl, "");
+      const qualityStatus = normalizeQualityStatus(track.qualityStatus, "ok");
       return {
         id: rawText(track.id, 80) || id("track_"),
         anime: anime,
         opening: opening,
         coverUrl: coverUrl,
         description: description,
+        fallbackAudioUrl: fallbackAudioUrl,
+        qualityStatus: qualityStatus,
         englishTitle: englishTitle,
         romajiTitle: romajiTitle,
         title: anime,
@@ -431,7 +472,7 @@ function roomClients(room) {
 }
 
 function isMetaConfigKey(code) {
-  return code === "__soloStats" || code === "__soloReports";
+  return code === "__soloStats" || code === "__soloReports" || code === "__soloPlayers";
 }
 
 function soloStatsStore() {
@@ -446,6 +487,104 @@ function soloReportsStore() {
     persistedRoomConfigs.__soloReports = [];
   }
   return persistedRoomConfigs.__soloReports;
+}
+
+function soloPlayersStore() {
+  if (!persistedRoomConfigs.__soloPlayers || typeof persistedRoomConfigs.__soloPlayers !== "object" || Array.isArray(persistedRoomConfigs.__soloPlayers)) {
+    persistedRoomConfigs.__soloPlayers = {};
+  }
+  return persistedRoomConfigs.__soloPlayers;
+}
+
+function dayKey(timestamp) {
+  return new Date((timestamp || now()) * 1000).toISOString().slice(0, 10);
+}
+
+function soloPlayerEntry(socket) {
+  const clientId = rawText(socket && socket.clientId, 80) || (socket && socket.id) || "solo";
+  const store = soloPlayersStore();
+  if (!store[clientId]) {
+    store[clientId] = {
+      clientId: clientId,
+      nickname: cleanText(socket && socket.nickname, "Solo", 60),
+      avatar: cleanAvatar(socket && socket.avatar),
+      streak: 0,
+      bestStreak: 0,
+      attempts: 0,
+      guessed: 0,
+      todayAttempts: 0,
+      todayGuessed: 0,
+      todayKey: dayKey(now()),
+      history: []
+    };
+  }
+  const entry = store[clientId];
+  entry.clientId = clientId;
+  entry.nickname = cleanText((socket && socket.nickname) || entry.nickname, "Solo", 60);
+  entry.avatar = cleanAvatar((socket && socket.avatar) || entry.avatar);
+  if (entry.todayKey !== dayKey(now())) {
+    entry.todayKey = dayKey(now());
+    entry.todayAttempts = 0;
+    entry.todayGuessed = 0;
+  }
+  entry.streak = Math.max(0, Number(entry.streak || 0));
+  entry.bestStreak = Math.max(0, Number(entry.bestStreak || 0));
+  entry.attempts = Math.max(0, Number(entry.attempts || 0));
+  entry.guessed = Math.max(0, Number(entry.guessed || 0));
+  entry.todayAttempts = Math.max(0, Number(entry.todayAttempts || 0));
+  entry.todayGuessed = Math.max(0, Number(entry.todayGuessed || 0));
+  if (!Array.isArray(entry.history)) entry.history = [];
+  return entry;
+}
+
+function publicSoloProfile(socket) {
+  if (!socket || socket.role !== "solo") return null;
+  const entry = soloPlayerEntry(socket);
+  return {
+    nickname: cleanText(entry.nickname, "Solo", 60),
+    avatar: cleanAvatar(entry.avatar),
+    streak: Math.max(0, Number(entry.streak || 0)),
+    bestStreak: Math.max(0, Number(entry.bestStreak || 0)),
+    attempts: Math.max(0, Number(entry.attempts || 0)),
+    guessed: Math.max(0, Number(entry.guessed || 0)),
+    percent: entry.attempts ? Math.round((entry.guessed / entry.attempts) * 100) : 0,
+    todayAttempts: Math.max(0, Number(entry.todayAttempts || 0)),
+    todayGuessed: Math.max(0, Number(entry.todayGuessed || 0)),
+    history: entry.history.slice(-12).reverse().map(function (item) {
+      return {
+        at: numberInRange(item.at, 0, 0, 9999999999),
+        anime: rawText(item.anime, 180),
+        opening: rawText(item.opening, 120),
+        answerText: rawText(item.answerText, 180),
+        guessed: Boolean(item.guessed),
+        streakAfter: Math.max(0, Number(item.streakAfter || 0))
+      };
+    })
+  };
+}
+
+function publicSoloLeaderboard() {
+  return Object.keys(soloPlayersStore()).map(function (clientId) {
+    const entry = soloPlayersStore()[clientId] || {};
+    const attempts = Math.max(0, Number(entry.attempts || 0));
+    const guessed = Math.max(0, Number(entry.guessed || 0));
+    return {
+      nickname: cleanText(entry.nickname, "Solo", 60),
+      avatar: cleanAvatar(entry.avatar),
+      streak: Math.max(0, Number(entry.streak || 0)),
+      bestStreak: Math.max(0, Number(entry.bestStreak || 0)),
+      attempts: attempts,
+      guessed: guessed,
+      percent: attempts ? Math.round((guessed / attempts) * 100) : 0,
+      todayAttempts: Math.max(0, Number(entry.todayAttempts || 0)),
+      todayGuessed: Math.max(0, Number(entry.todayGuessed || 0))
+    };
+  }).sort(function (a, b) {
+    if (b.bestStreak !== a.bestStreak) return b.bestStreak - a.bestStreak;
+    if (b.streak !== a.streak) return b.streak - a.streak;
+    if (b.guessed !== a.guessed) return b.guessed - a.guessed;
+    return a.nickname.localeCompare(b.nickname);
+  }).slice(0, 30);
 }
 
 function soloTrackKey(track) {
@@ -504,7 +643,11 @@ function availableSoloTracks(socket, tracks) {
   const stats = soloStatsStore();
   let availableTracks = tracks.filter(function (track) {
     const key = soloTrackKey(track);
-    return !skipped[key] && !(stats[key] && stats[key].mediaError);
+    const stat = stats[key] || {};
+    return !skipped[key]
+      && !stat.disabled
+      && stat.qualityStatus !== "needs_fix"
+      && !(stat.mediaError && stat.qualityStatus !== "verified");
   });
   if (!availableTracks.length) {
     availableTracks = tracks.filter(function (track) {
@@ -553,10 +696,13 @@ function updateSoloStatMeta(track, entry) {
   entry.opening = rawText(track.opening, 120);
   entry.coverUrl = rawText(track.coverUrl, 700);
   entry.audioUrl = rawText(track.audioUrl, 700);
+  entry.fallbackAudioUrl = cleanAudioUrl(track.fallbackAudioUrl, "");
   entry.videoId = rawText(track.videoId, 40);
   entry.englishTitle = cleanAnimeTitlePart(track.englishTitle);
   entry.romajiTitle = cleanAnimeTitlePart(track.romajiTitle);
   entry.difficulty = difficultyExists(track.difficulty) ? track.difficulty : "medium";
+  entry.qualityStatus = normalizeQualityStatus(entry.qualityStatus || track.qualityStatus, "ok");
+  entry.disabled = Boolean(entry.disabled);
 }
 
 function soloStatForTrack(track) {
@@ -573,6 +719,7 @@ function markSoloTrackLoadError(track, reason) {
   stat.mediaError = true;
   stat.mediaErrorAt = now();
   stat.mediaErrorReason = rawText(reason, 160) || "Nie zaladowano openingu";
+  stat.qualityStatus = "needs_fix";
   savePersistedRooms();
   broadcastModeratorStats();
   return stat;
@@ -585,6 +732,7 @@ function clearSoloTrackLoadError(track) {
   delete stat.mediaError;
   delete stat.mediaErrorReason;
   delete stat.mediaErrorAt;
+  if (stat.qualityStatus === "needs_fix") stat.qualityStatus = "ok";
   savePersistedRooms();
   broadcastModeratorStats();
   return stat;
@@ -603,12 +751,20 @@ function publicSoloStats(currentKey) {
         anime: combinedAnimeTitle(entry.englishTitle || (track && track.englishTitle), entry.romajiTitle || (track && track.romajiTitle), entry.anime || (track && track.anime)),
         opening: rawText(entry.opening || (track && track.opening), 120),
         coverUrl: rawText(entry.coverUrl || (track && track.coverUrl), 700),
+        audioUrl: rawText(entry.audioUrl || (track && track.audioUrl), 700),
+        fallbackAudioUrl: cleanAudioUrl(entry.fallbackAudioUrl || (track && track.fallbackAudioUrl), ""),
+        videoId: rawText(entry.videoId || (track && track.videoId), 40),
         englishTitle: cleanAnimeTitlePart(entry.englishTitle || (track && track.englishTitle)),
         romajiTitle: cleanAnimeTitlePart(entry.romajiTitle || (track && track.romajiTitle)),
         difficulty: difficultyExists(entry.difficulty) ? entry.difficulty : (difficultyExists(track && track.difficulty) ? track.difficulty : "medium"),
         difficultyLabel: difficultyLabel(difficultyExists(entry.difficulty) ? entry.difficulty : (difficultyExists(track && track.difficulty) ? track.difficulty : "medium")),
+        qualityStatus: normalizeQualityStatus(entry.qualityStatus || (track && track.qualityStatus), "ok"),
+        qualityLabel: qualityLabel(entry.qualityStatus || (track && track.qualityStatus)),
+        disabled: Boolean(entry.disabled),
+        reportsCount: 0,
         attempts: 0,
         guessed: 0,
+        missed: 0,
         soloAttempts: 0,
         gameAttempts: 0,
         soloGameAttempts: 0,
@@ -632,6 +788,7 @@ function publicSoloStats(currentKey) {
     const guessed = Math.max(0, Number(entry.guessed || 0));
     row.attempts += attempts;
     row.guessed += guessed;
+    row.missed += Math.max(0, attempts - guessed);
     row.soloAttempts += attempts;
     if (entry.mediaError) {
       row.mediaError = true;
@@ -652,6 +809,7 @@ function publicSoloStats(currentKey) {
     const guessed = Math.max(0, Number(entry.guessed || 0));
     row.attempts += attempts;
     row.guessed += guessed;
+    row.missed += Math.max(0, attempts - guessed);
     row.soloAttempts += attempts;
     if (entry.mediaError) {
       row.mediaError = true;
@@ -664,6 +822,7 @@ function publicSoloStats(currentKey) {
     const track = result.track;
     const row = ensureRow(track);
     row.attempts += 1;
+    if (!(track.result && track.result.status === "guessed")) row.missed += 1;
     if (result.soloGame) {
       row.soloAttempts += 1;
       row.soloGameAttempts += 1;
@@ -673,9 +832,20 @@ function publicSoloStats(currentKey) {
     if (track.result && track.result.status === "guessed") row.guessed += 1;
   });
 
+  soloReportsStore().forEach(function (report) {
+    const key = rawText(report.trackKey, 140);
+    if (!key || !rowsByKey[key]) return;
+    rowsByKey[key].reportsCount += 1;
+    if (rowsByKey[key].qualityStatus === "ok") {
+      rowsByKey[key].qualityStatus = "reported";
+      rowsByKey[key].qualityLabel = qualityLabel("reported");
+    }
+  });
+
   const rows = Object.keys(rowsByKey).map(function (key) {
     const row = rowsByKey[key];
     row.percent = row.attempts ? Math.round((row.guessed / row.attempts) * 100) : 0;
+    row.qualityLabel = qualityLabel(row.qualityStatus);
     return row;
   });
 
@@ -707,6 +877,8 @@ function publicSoloReports() {
         romajiTitle: cleanAnimeTitlePart(report.romajiTitle),
         difficulty: difficultyExists(report.difficulty) ? report.difficulty : "medium",
         difficultyLabel: difficultyLabel(report.difficulty),
+        qualityStatus: normalizeQualityStatus(report.qualityStatus, "reported"),
+        fallbackAudioUrl: cleanAudioUrl(report.fallbackAudioUrl, ""),
         coverUrl: rawText(report.coverUrl, 700),
         description: rawText(report.description, 420),
         audioUrl: rawText(report.audioUrl, 700),
@@ -850,6 +1022,61 @@ function normalizeAnswer(value) {
     .trim();
 }
 
+function compactAnswer(value) {
+  return normalizeAnswer(value).replace(/\s+/g, "");
+}
+
+function levenshteinDistance(a, b) {
+  const left = String(a || "");
+  const right = String(b || "");
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+  let previous = Array.from({ length: right.length + 1 }, function (_value, index) { return index; });
+  for (let i = 0; i < left.length; i += 1) {
+    const current = [i + 1];
+    for (let j = 0; j < right.length; j += 1) {
+      const cost = left[i] === right[j] ? 0 : 1;
+      current[j + 1] = Math.min(
+        current[j] + 1,
+        previous[j + 1] + 1,
+        previous[j] + cost
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length];
+}
+
+function tokenOverlapScore(a, b) {
+  const answerTokens = normalizeAnswer(a).split(/\s+/).filter(function (token) { return token.length >= 3; });
+  const titleTokens = normalizeAnswer(b).split(/\s+/).filter(function (token) { return token.length >= 3; });
+  if (!answerTokens.length || !titleTokens.length) return 0;
+  const titleSet = new Set(titleTokens);
+  const hits = answerTokens.filter(function (token) { return titleSet.has(token); }).length;
+  return hits / Math.max(answerTokens.length, titleTokens.length);
+}
+
+function fuzzyTitleMatches(answerText, title) {
+  const answer = normalizeAnswer(answerText);
+  const normalizedTitle = normalizeAnswer(title);
+  if (!answer || !normalizedTitle) return false;
+  if (answer === normalizedTitle) return true;
+  if (answer.length >= 6 && normalizedTitle.includes(answer)) return true;
+  if (normalizedTitle.length >= 6 && answer.includes(normalizedTitle)) return true;
+
+  const compactA = compactAnswer(answer);
+  const compactB = compactAnswer(normalizedTitle);
+  const maxLength = Math.max(compactA.length, compactB.length);
+  if (maxLength >= 8) {
+    const distance = levenshteinDistance(compactA, compactB);
+    const ratio = distance / maxLength;
+    if (distance <= 2 || ratio <= 0.18) return true;
+  }
+
+  return answer.length >= 8 && tokenOverlapScore(answer, normalizedTitle) >= 0.72;
+}
+
 function soloTrackTitles(track) {
   const titles = [
     track && track.anime,
@@ -880,10 +1107,9 @@ function publicSoloTitleOptions() {
 }
 
 function soloAnswerMatches(track, answerText) {
-  const answer = normalizeAnswer(answerText);
-  if (!answer) return false;
+  if (!normalizeAnswer(answerText)) return false;
   return soloTrackTitles(track).some(function (title) {
-    return normalizeAnswer(title) === answer;
+    return fuzzyTitleMatches(answerText, title);
   });
 }
 
@@ -1652,6 +1878,8 @@ function normalizeTrack(payload, existing) {
   const opening = rawText(payload.opening || payload.artist, 120);
   const coverUrl = cleanImageUrl(payload.coverUrl || payload.cover || payload.thumbnailUrl, existing ? existing.coverUrl : youtubeThumbnailUrl(videoId));
   const description = rawText(payload.description || payload.animeDescription || payload.summary || (existing && existing.description), 420);
+  const fallbackAudioUrl = cleanAudioUrl(payload.fallbackAudioUrl || payload.localAudioUrl || payload.backupAudioUrl, existing ? existing.fallbackAudioUrl : "");
+  const qualityStatus = normalizeQualityStatus(payload.qualityStatus, existing ? existing.qualityStatus : "ok");
   const durationSeconds = numberInRange(payload.durationSeconds, existing ? existing.durationSeconds : parseDurationText(payload.durationText), 0, 86400);
   const durationText = rawText(payload.durationText, 20) || (existing ? existing.durationText : "") || formatDurationSeconds(durationSeconds);
 
@@ -1662,6 +1890,8 @@ function normalizeTrack(payload, existing) {
       opening: opening,
       coverUrl: coverUrl,
       description: description,
+      fallbackAudioUrl: fallbackAudioUrl,
+      qualityStatus: qualityStatus,
       englishTitle: englishTitle,
       romajiTitle: romajiTitle,
       title: anime,
@@ -1701,8 +1931,11 @@ function visibleTrack(track, socket, room) {
     artist: opening,
     difficulty: track.difficulty || "medium",
     audioUrl: track.audioUrl,
+    fallbackAudioUrl: canSeeAdminMeta ? (track.fallbackAudioUrl || "") : "",
     source: track.source || "audio",
     videoId: track.videoId || "",
+    qualityStatus: track.qualityStatus || "ok",
+    qualityLabel: qualityLabel(track.qualityStatus),
     durationText: track.durationText || "",
     durationSeconds: numberInRange(track.durationSeconds, 0, 0, 86400),
     startAtFirst: numericTrackTime(track.startAtFirst, 0),
@@ -1802,11 +2035,13 @@ function publicRoom(room, socket) {
       groups: publicGroups(room),
       settings: room.settings,
       difficulties: DIFFICULTIES,
+      qualityStatuses: QUALITY_STATUSES,
       people: peopleForRoom(room, isModerator),
       blockedIps: isModerator ? publicBlockedIps(room) : [],
       localAudioFiles: isModerator ? listLocalAudioFiles() : [],
       soloStats: isModerator ? publicSoloStats(room.currentTrackId ? soloTrackKey(currentTrack(room) || {}) : "") : [],
       soloReports: isModerator ? publicSoloReports() : [],
+      soloLeaderboard: isModerator ? publicSoloLeaderboard() : [],
       adminRooms: isModerator ? publicAdminRooms(room.code) : []
     }
   };
@@ -1877,8 +2112,11 @@ function visibleSoloTrack(session) {
     artist: revealed ? track.opening : "",
     difficulty: "",
     audioUrl: track.audioUrl,
+    fallbackAudioUrl: track.fallbackAudioUrl || "",
     source: track.source || "audio",
     videoId: track.videoId || "",
+    qualityStatus: track.qualityStatus || "ok",
+    qualityLabel: qualityLabel(track.qualityStatus),
     durationText: track.durationText || "",
     durationSeconds: numberInRange(track.durationSeconds, 0, 0, 86400),
     startAtFirst: numericTrackTime(track.startAtFirst, 0),
@@ -1894,6 +2132,7 @@ function visibleSoloTrack(session) {
 function publicSoloState(socket) {
   const session = socket.soloSession;
   const trackKey = session && session.track ? soloTrackKey(session.track) : "";
+  const soloProfile = publicSoloProfile(socket);
   return {
     type: "soloState",
     room: {
@@ -1918,16 +2157,22 @@ function publicSoloState(socket) {
         difficultyScores: cloneScores(DEFAULT_DIFFICULTY_SCORES)
       },
       difficulties: DIFFICULTIES,
+      qualityStatuses: QUALITY_STATUSES,
       people: [],
       blockedIps: [],
       solo: {
         answered: Boolean(session && session.answered),
         guessed: session && session.answered ? Boolean(session.guessed) : null,
         answerText: session && session.answered ? rawText(session.answerText, 180) : "",
-        streak: Math.max(0, Number(socket.soloStreak || 0)),
+        streak: soloProfile ? soloProfile.streak : Math.max(0, Number(socket.soloStreak || 0)),
+        bestStreak: soloProfile ? soloProfile.bestStreak : Math.max(0, Number(socket.soloStreak || 0)),
+        todayAttempts: soloProfile ? soloProfile.todayAttempts : 0,
+        todayGuessed: soloProfile ? soloProfile.todayGuessed : 0,
         mediaError: Boolean(session && session.mediaError),
         mediaErrorReason: session && session.mediaError ? rawText(session.mediaErrorReason, 160) : ""
       },
+      soloProfile: soloProfile,
+      soloLeaderboard: publicSoloLeaderboard(),
       soloStats: [],
       soloTitleOptions: publicSoloTitleOptions()
     }
@@ -1969,6 +2214,24 @@ function failSoloMedia(socket, reason) {
   if (!session || !session.track || session.answered) return false;
 
   const cleanReason = rawText(reason, 160) || "Opening nie zaladowal sie.";
+  if (session.track.source === "youtube" && session.track.fallbackAudioUrl && !session.usingFallback) {
+    session.track = Object.assign({}, session.track, {
+      audioUrl: session.track.fallbackAudioUrl,
+      source: "audio",
+      usingFallback: true
+    });
+    session.phase = "loading";
+    session.startedAt = 0;
+    session.loadingStartedAt = now();
+    session.offset = 0;
+    session.mediaReady = false;
+    session.mediaError = false;
+    session.mediaErrorReason = "";
+    session.usingFallback = true;
+    sendSoloState(socket);
+    return "fallback";
+  }
+
   const key = soloTrackKey(session.track);
   if (!socket.soloLoadFailures) socket.soloLoadFailures = {};
   if (key) socket.soloLoadFailures[key] = true;
@@ -2028,6 +2291,28 @@ function recordSoloAnswer(socket, guessed, answerText) {
   if (guessed) stat.guessed = Math.max(0, Number(stat.guessed || 0)) + 1;
   else stat.guessed = Math.max(0, Number(stat.guessed || 0));
   stat.updatedAt = now();
+
+  const player = soloPlayerEntry(socket);
+  player.attempts = Math.max(0, Number(player.attempts || 0)) + 1;
+  player.todayAttempts = Math.max(0, Number(player.todayAttempts || 0)) + 1;
+  if (session.guessed) {
+    player.guessed = Math.max(0, Number(player.guessed || 0)) + 1;
+    player.todayGuessed = Math.max(0, Number(player.todayGuessed || 0)) + 1;
+  }
+  player.streak = Math.max(0, Number(socket.soloStreak || 0));
+  player.bestStreak = Math.max(Math.max(0, Number(player.bestStreak || 0)), player.streak);
+  player.updatedAt = now();
+  player.history.push({
+    at: now(),
+    trackKey: soloTrackKey(session.track),
+    anime: combinedAnimeTitle(session.track.englishTitle, session.track.romajiTitle, session.track.anime),
+    opening: rawText(session.track.opening, 120),
+    answerText: rawText(answerText, 180),
+    guessed: session.guessed,
+    streakAfter: player.streak
+  });
+  if (player.history.length > 80) player.history.splice(0, player.history.length - 80);
+
   savePersistedRooms();
   sendSoloState(socket);
   broadcastModeratorStats();
@@ -2042,6 +2327,9 @@ function recordSoloReport(socket, payload) {
 
   const track = session.track;
   const reports = soloReportsStore();
+  const stat = soloStatForTrack(track);
+  if (stat.qualityStatus === "ok" || !stat.qualityStatus) stat.qualityStatus = "reported";
+  stat.reportedAt = now();
   reports.push({
     id: id("report_"),
     at: now(),
@@ -2055,6 +2343,8 @@ function recordSoloReport(socket, payload) {
     englishTitle: cleanAnimeTitlePart(track.englishTitle),
     romajiTitle: cleanAnimeTitlePart(track.romajiTitle),
     difficulty: difficultyExists(track.difficulty) ? track.difficulty : "medium",
+    qualityStatus: normalizeQualityStatus(track.qualityStatus, "ok"),
+    fallbackAudioUrl: cleanAudioUrl(track.fallbackAudioUrl, ""),
     coverUrl: rawText(track.coverUrl, 700),
     description: rawText(track.description, 420),
     audioUrl: rawText(track.audioUrl, 700),
@@ -2079,7 +2369,8 @@ function handleSoloJoin(socket, payload) {
   socket.clientId = rawText(payload.clientId, 80) || socket.id;
   socket.nickname = cleanText(payload.nickname, "Solo", 60);
   socket.avatar = cleanAvatar(payload.avatar);
-  socket.soloStreak = Math.max(0, Number(soloStreaks.get(socket.clientId) || socket.soloStreak || 0));
+  const soloPlayer = soloPlayerEntry(socket);
+  socket.soloStreak = Math.max(0, Number(soloPlayer.streak || soloStreaks.get(socket.clientId) || socket.soloStreak || 0));
   socket.soloLoadFailures = {};
   socket.soloQueue = [];
   socket.team = "Solo";
@@ -2124,7 +2415,9 @@ function handleSoloAction(socket, payload) {
     const session = socket.soloSession;
     const key = rawText(payload.key, 240);
     if (!session || !session.track || session.answered || key !== soloTrackKey(session.track)) return;
-    if (failSoloMedia(socket, payload.reason)) return startSoloRound(socket, true);
+    const failed = failSoloMedia(socket, payload.reason);
+    if (failed === "fallback") return;
+    if (failed) return startSoloRound(socket, true);
     return;
   }
 
@@ -2378,6 +2671,41 @@ function updateSoloStatDifficulty(payload) {
   return null;
 }
 
+function updateSoloStatQuality(payload) {
+  const statKey = rawText(payload.key, 140);
+  const status = normalizeQualityStatus(payload.qualityStatus || payload.status, "ok");
+  if (!statKey) return "Nie znaleziono openingu.";
+
+  const store = soloStatsStore();
+  if (!store[statKey]) store[statKey] = { attempts: 0, guessed: 0 };
+  store[statKey].qualityStatus = status;
+  store[statKey].disabled = Boolean(payload.disabled) || status === "needs_fix";
+  if (status === "verified" || status === "ok") {
+    delete store[statKey].mediaError;
+    delete store[statKey].mediaErrorReason;
+    delete store[statKey].mediaErrorAt;
+    store[statKey].disabled = Boolean(payload.disabled);
+  }
+  store[statKey].qualityUpdatedAt = now();
+  savePersistedRooms();
+  broadcastModeratorStats();
+  return null;
+}
+
+function clearSoloStatMediaError(payload) {
+  const statKey = rawText(payload.key, 140);
+  const store = soloStatsStore();
+  if (!statKey || !store[statKey]) return "Nie znaleziono openingu.";
+  delete store[statKey].mediaError;
+  delete store[statKey].mediaErrorReason;
+  delete store[statKey].mediaErrorAt;
+  if (store[statKey].qualityStatus === "needs_fix") store[statKey].qualityStatus = "ok";
+  store[statKey].disabled = false;
+  savePersistedRooms();
+  broadcastModeratorStats();
+  return null;
+}
+
 function removeSoloReport(payload) {
   const reportId = rawText(payload.reportId || payload.id, 80);
   if (!reportId) return "Nie znaleziono zgloszenia.";
@@ -2424,6 +2752,8 @@ function updateReportMetaForTrack(oldKey, track) {
     report.englishTitle = cleanAnimeTitlePart(track.englishTitle);
     report.romajiTitle = cleanAnimeTitlePart(track.romajiTitle);
     report.difficulty = difficultyExists(track.difficulty) ? track.difficulty : "medium";
+    report.qualityStatus = normalizeQualityStatus(track.qualityStatus, report.qualityStatus || "reported");
+    report.fallbackAudioUrl = cleanAudioUrl(track.fallbackAudioUrl, "");
     report.coverUrl = rawText(track.coverUrl, 700);
     report.description = rawText(track.description, 420);
     report.audioUrl = rawText(track.audioUrl, 700);
@@ -2764,6 +3094,18 @@ async function handleModerator(socket, payload) {
     return;
   }
 
+  if (action === "updateSoloStatQuality") {
+    const error = updateSoloStatQuality(payload || {});
+    if (error) return sendError(socket, error);
+    return;
+  }
+
+  if (action === "clearSoloMediaError") {
+    const error = clearSoloStatMediaError(payload || {});
+    if (error) return sendError(socket, error);
+    return;
+  }
+
   if (action === "removeSoloReport") {
     const error = removeSoloReport(payload || {});
     if (error) return sendError(socket, error);
@@ -3032,6 +3374,101 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function parseJsonBody(req, res, maxBytes, callback) {
+  let size = 0;
+  const chunks = [];
+  req.on("data", function (chunk) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      res.writeHead(413, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "Plik jest za duzy." }));
+      req.destroy();
+      return;
+    }
+    chunks.push(chunk);
+  });
+  req.on("end", function () {
+    try {
+      callback(JSON.parse((Buffer.concat(chunks).toString("utf8") || "{}").replace(/^\uFEFF/, "")));
+    } catch (error) {
+      sendJson(res, 400, { error: "Niepoprawny JSON." });
+    }
+  });
+}
+
+function dataBackupPayload() {
+  return {
+    app: "anime-opening-quiz",
+    version: 2,
+    exportedAt: now(),
+    rooms: persistedRoomConfigs
+  };
+}
+
+function handleDataExportRequest(req, res, requestUrl) {
+  if (req.method !== "GET") return sendJson(res, 405, { error: "Niepoprawna metoda." });
+  if (rawText(requestUrl.searchParams.get("moderatorPassword"), 120) !== MODERATOR_PASSWORD) {
+    return sendJson(res, 403, { error: "Nieprawidlowe haslo moderatora." });
+  }
+
+  const body = JSON.stringify(dataBackupPayload(), null, 2);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Disposition": "attachment; filename=\"anime-opening-quiz-backup-" + stamp + ".json\""
+  });
+  res.end(body);
+}
+
+function importPersistedRooms(imported) {
+  const source = imported && imported.rooms && typeof imported.rooms === "object" && !Array.isArray(imported.rooms)
+    ? imported.rooms
+    : imported;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return "Niepoprawny plik backupu.";
+
+  Object.keys(persistedRoomConfigs).forEach(function (key) {
+    delete persistedRoomConfigs[key];
+  });
+
+  Object.keys(source).forEach(function (key) {
+    const code = isMetaConfigKey(key) ? key : roomCode(key);
+    if (code === "__soloStats") {
+      persistedRoomConfigs[code] = source[key] && typeof source[key] === "object" && !Array.isArray(source[key]) ? source[key] : {};
+    } else if (code === "__soloReports") {
+      persistedRoomConfigs[code] = Array.isArray(source[key]) ? source[key] : [];
+    } else if (code === "__soloPlayers") {
+      persistedRoomConfigs[code] = source[key] && typeof source[key] === "object" && !Array.isArray(source[key]) ? source[key] : {};
+    } else if (source[key] && typeof source[key] === "object") {
+      persistedRoomConfigs[code] = source[key];
+    }
+  });
+
+  rooms.clear();
+  savePersistedRooms();
+  return "";
+}
+
+function handleDataImportRequest(req, res) {
+  if (req.method !== "POST") return sendJson(res, 405, { error: "Niepoprawna metoda." });
+  parseJsonBody(req, res, 12 * 1024 * 1024, function (payload) {
+    if (rawText(payload.moderatorPassword, 120) !== MODERATOR_PASSWORD) {
+      return sendJson(res, 403, { error: "Nieprawidlowe haslo moderatora." });
+    }
+    const error = importPersistedRooms(payload.data || payload.backup || payload.rooms || payload);
+    if (error) return sendJson(res, 400, { error: error });
+    sockets.forEach(function (socket) {
+      if (socket.role === "moderator" && socket.roomCode) {
+        socket.roomCode = roomCode(socket.roomCode);
+        send(socket, publicRoom(getRoom(socket.roomCode), socket));
+      } else if (socket.roomCode) {
+        send(socket, publicRoom(getRoom(socket.roomCode), socket));
+      }
+    });
+    return sendJson(res, 200, { message: "Backup wczytany.", rooms: Object.keys(persistedRoomConfigs).length });
+  });
+}
+
 function handleAudioUploadRequest(req, res) {
   if (req.method !== "POST") return sendJson(res, 405, { error: "Niepoprawna metoda." });
 
@@ -3051,7 +3488,7 @@ function handleAudioUploadRequest(req, res) {
   req.on("end", function () {
     let payload;
     try {
-      payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      payload = JSON.parse(Buffer.concat(chunks).toString("utf8").replace(/^\uFEFF/, ""));
     } catch (error) {
       return sendJson(res, 400, { error: "Niepoprawny upload audio." });
     }
@@ -3073,6 +3510,8 @@ function handleAudioUploadRequest(req, res) {
 function serve(req, res) {
   const requestUrl = new URL(req.url, "http://" + (req.headers.host || "localhost"));
   if (requestUrl.pathname === "/api/upload-audio") return handleAudioUploadRequest(req, res);
+  if (requestUrl.pathname === "/api/export-data") return handleDataExportRequest(req, res, requestUrl);
+  if (requestUrl.pathname === "/api/import-data") return handleDataImportRequest(req, res);
 
   let pathname = decodeURIComponent(requestUrl.pathname);
   if (pathname === "/") pathname = "/index.html";
@@ -3249,7 +3688,8 @@ setInterval(function () {
     if (socket.role === "solo" && session && session.phase === "loading" && !session.answered) {
       const loadingStartedAt = Number(session.loadingStartedAt || 0);
       if (loadingStartedAt > 0 && now() - loadingStartedAt >= SOLO_MEDIA_LOAD_TIMEOUT) {
-        failSoloMedia(socket, "Opening nie zaladowal sie w 5 sekund.");
+        const failed = failSoloMedia(socket, "Opening nie zaladowal sie w 5 sekund.");
+        if (failed === "fallback") return;
         startSoloRound(socket, true);
         return;
       }

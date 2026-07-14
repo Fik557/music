@@ -857,6 +857,8 @@ h2 {
 .library-difficulty-list,
 .admin-report-list,
 .admin-solo-stats-list,
+.admin-solo-players-list,
+.quality-list,
 .stats-category-list {
   display: grid;
   gap: 10px;
@@ -869,7 +871,9 @@ h2 {
 .search-result-row,
 .library-row,
 .admin-report-row,
-.admin-room-row {
+.admin-room-row,
+.quality-row,
+.admin-center-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -941,6 +945,49 @@ h2 {
 .solo-score-row.solo-answer-wrong {
   border-color: rgba(255, 114, 170, 0.58);
   background: rgba(255, 114, 170, 0.1);
+}
+
+.solo-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.solo-history-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(242, 167, 199, 0.2);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(39, 31, 45, 0.58);
+}
+
+.solo-history-row b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border-radius: 8px;
+  color: #21131a;
+  background: var(--teal);
+  font-size: 0.8rem;
+  font-weight: 950;
+}
+
+.solo-history-row.wrong b {
+  color: #fff8fb;
+  background: rgba(255, 114, 170, 0.72);
+}
+
+.solo-history-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .solo-stat-row .score-value strong {
@@ -1061,6 +1108,108 @@ h2 {
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 900;
+}
+
+.admin-center-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-center-card {
+  align-items: stretch;
+  min-height: 118px;
+}
+
+.admin-center-actions,
+.quality-tools,
+.backup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-center-actions button,
+.quality-tools button,
+.backup-actions button {
+  min-height: 38px;
+  font-weight: 900;
+}
+
+.admin-center-kpi {
+  align-self: center;
+  min-width: 64px;
+  border: 1px solid rgba(255, 211, 227, 0.24);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #fff8fb;
+  background: rgba(255, 211, 227, 0.08);
+  font-size: 2rem;
+  font-weight: 950;
+  line-height: 1;
+  text-align: center;
+}
+
+.solo-player-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.solo-player-details span,
+.quality-pill {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(242, 167, 199, 0.24);
+  border-radius: 8px;
+  padding: 0 9px;
+  color: #ffd3e3;
+  background: rgba(255, 211, 227, 0.08);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.quality-pill.quality-verified,
+.quality-pill.quality-ok {
+  color: #d8ffe8;
+  border-color: rgba(117, 221, 165, 0.34);
+  background: rgba(117, 221, 165, 0.11);
+}
+
+.quality-pill.quality-slow,
+.quality-pill.quality-reported {
+  color: #ffe5b8;
+  border-color: rgba(255, 210, 125, 0.36);
+  background: rgba(255, 210, 125, 0.1);
+}
+
+.quality-pill.quality-needs_fix,
+.quality-pill.quality-disabled {
+  color: #ffc3cf;
+  border-color: rgba(255, 114, 135, 0.48);
+  background: rgba(255, 114, 135, 0.12);
+}
+
+.quality-tools select {
+  width: auto;
+  min-width: 154px;
+  min-height: 38px;
+}
+
+.backup-actions {
+  justify-content: flex-start;
+}
+
+.backup-actions input[type="file"] {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  color: var(--muted);
+  background: rgba(18, 13, 20, 0.75);
 }
 
 .solo-score-row.own-player::before,
@@ -1348,6 +1497,7 @@ h2 {
 }
 
 .mod-controls,
+.admin-center-section,
 .rooms-section,
 .tracks-section,
 .playlist-section,
@@ -1355,7 +1505,11 @@ h2 {
 .library-section,
 .blocked-section,
 .scoring-section,
-.admin-stats-section {
+.admin-stats-section,
+.solo-players-section,
+.quality-section,
+.backup-section,
+.reports-section {
   grid-column: 1 / -1;
 }
 
@@ -1432,19 +1586,23 @@ h2 {
 }
 
 .track-local-audio-select {
-  grid-column: 1 / 4;
+  grid-column: 1 / 3;
+}
+
+.track-fallback-audio-select {
+  grid-column: 3 / 5;
 }
 
 .audio-upload-input {
-  grid-column: 4 / 6;
+  grid-column: 5 / 7;
 }
 
 .audio-upload-button {
-  grid-column: 6 / 7;
+  grid-column: 7 / 8;
 }
 
 .audio-upload-status {
-  grid-column: 7 / 9;
+  grid-column: 8 / 9;
   align-self: center;
   min-width: 0;
   overflow: hidden;
@@ -1650,9 +1808,20 @@ h2 {
     align-items: center;
   }
 
+  .admin-center-grid,
+  .admin-solo-stats-list .solo-stat-row {
+    grid-template-columns: 1fr;
+  }
+
+  .quality-tools,
+  .admin-center-actions {
+    justify-content: flex-start;
+  }
+
   .track-cover-input,
   .track-description-input,
   .track-local-audio-select,
+  .track-fallback-audio-select,
   .audio-upload-input,
   .audio-upload-button,
   .audio-upload-status {
@@ -1766,6 +1935,8 @@ h2 {
   .track-row,
   .blocked-ip-row,
   .search-result-row,
+  .quality-row,
+  .admin-center-card,
   .admin-report-row,
   .library-row {
     grid-template-columns: 1fr;
@@ -1775,7 +1946,10 @@ h2 {
   .score-actions,
   .track-actions,
   .person-actions,
-  .blocked-ip-actions {
+  .blocked-ip-actions,
+  .quality-tools,
+  .admin-center-actions,
+  .backup-actions {
     justify-content: space-between;
   }
 

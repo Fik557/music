@@ -2943,6 +2943,7 @@ function recordSoloAnswer(socket, guessed, answerText) {
     }
   }
 
+  publicSoloDayChampion();
   savePersistedRooms();
   broadcastSoloStates();
   broadcastModeratorStats();

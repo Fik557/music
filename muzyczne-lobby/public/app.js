@@ -194,6 +194,7 @@ let profile = null;
 let ownId = null;
 let loginMode = "solo";
 let lastStateAt = Date.now();
+let lastStateMessageType = "";
 let soundEnabled = false;
 let pageVolume = loadPageVolume();
 let reconnectTimer = null;
@@ -647,7 +648,7 @@ function connect() {
     const payload = JSON.parse(event.data);
     if (payload.type === "hello") ownId = payload.id;
     if (payload.type === "state") {
-      state = payload.room;
+      state = mergeStatePayload(payload.room, payload.type);
       lastStateAt = Date.now();
       const nextBuzzerSoundKey = buzzerSoundKey(state);
       if (nextBuzzerSoundKey && nextBuzzerSoundKey !== lastBuzzerSoundKey) playBuzzerSound();
@@ -656,7 +657,7 @@ function connect() {
       syncAudio();
     }
     if (payload.type === "soloState") {
-      state = payload.room;
+      state = mergeStatePayload(payload.room, payload.type);
       lastStateAt = Date.now();
       render();
       syncAudio();
@@ -724,6 +725,40 @@ function connect() {
     clearTimeout(reconnectTimer);
     if (profile) reconnectTimer = setTimeout(connect, 1000);
   });
+}
+
+function mergeStatePayload(nextState, messageType) {
+  const next = nextState && typeof nextState === "object" ? nextState : {};
+  const sameRoom = state && state.code === next.code;
+  const previous = sameRoom ? state : {};
+  lastStateMessageType = messageType;
+  const merged = Object.assign({}, previous, next);
+
+  [
+    "adminRooms",
+    "blockedIps",
+    "groups",
+    "libraryTracks",
+    "localAudioFiles",
+    "lockedGroups",
+    "people",
+    "qualityStatuses",
+    "soloReports",
+    "soloStats",
+    "soloTitleOptions",
+    "tracks"
+  ].forEach(function (field) {
+    if (!Array.isArray(merged[field])) merged[field] = [];
+  });
+
+  if (!merged.teams || typeof merged.teams !== "object" || Array.isArray(merged.teams)) merged.teams = {};
+  merged.settings = Object.assign(
+    { clipDuration: 15, segmentSplit: 5, difficultyScores: {} },
+    previous.settings && typeof previous.settings === "object" ? previous.settings : {},
+    next.settings && typeof next.settings === "object" ? next.settings : {}
+  );
+
+  return merged;
 }
 
 function send(payload) {

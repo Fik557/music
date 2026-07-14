@@ -125,6 +125,12 @@ const youtubeSearchButton = $("#youtubeSearchButton");
 const youtubeSearchResults = $("#youtubeSearchResults");
 const libraryList = $("#libraryList");
 const libraryCount = $("#libraryCount");
+const librarySearchInput = $("#librarySearchInput");
+const libraryDifficultyFilter = $("#libraryDifficultyFilter");
+const libraryPercentFilter = $("#libraryPercentFilter");
+const libraryStatusFilter = $("#libraryStatusFilter");
+const librarySortInput = $("#librarySortInput");
+const libraryClearFiltersButton = $("#libraryClearFiltersButton");
 const blockedIpList = $("#blockedIpList");
 const playButton = $("#playButton");
 const pauseButton = $("#pauseButton");
@@ -218,6 +224,11 @@ let activeAdminPanel = "center";
 let lastSoloAnswerTrackId = "";
 let lastSoloReportTrackId = "";
 let adminStatsSort = "desc";
+let librarySearch = "";
+let libraryDifficulty = "all";
+let libraryPercent = "all";
+let libraryStatus = "all";
+let librarySort = "difficulty";
 let avatarCrop = {
   zoom: 1,
   x: 0,
@@ -973,6 +984,57 @@ if (statsSortHardestButton) {
   statsSortHardestButton.addEventListener("click", function () {
     adminStatsSort = "hardest";
     renderAdminSoloStats();
+  });
+}
+
+if (librarySearchInput) {
+  librarySearchInput.addEventListener("input", function () {
+    librarySearch = librarySearchInput.value || "";
+    renderLibrary();
+  });
+}
+
+if (libraryDifficultyFilter) {
+  libraryDifficultyFilter.addEventListener("change", function () {
+    libraryDifficulty = libraryDifficultyFilter.value || "all";
+    renderLibrary();
+  });
+}
+
+if (libraryPercentFilter) {
+  libraryPercentFilter.addEventListener("change", function () {
+    libraryPercent = libraryPercentFilter.value || "all";
+    renderLibrary();
+  });
+}
+
+if (libraryStatusFilter) {
+  libraryStatusFilter.addEventListener("change", function () {
+    libraryStatus = libraryStatusFilter.value || "all";
+    renderLibrary();
+  });
+}
+
+if (librarySortInput) {
+  librarySortInput.addEventListener("change", function () {
+    librarySort = librarySortInput.value || "difficulty";
+    renderLibrary();
+  });
+}
+
+if (libraryClearFiltersButton) {
+  libraryClearFiltersButton.addEventListener("click", function () {
+    librarySearch = "";
+    libraryDifficulty = "all";
+    libraryPercent = "all";
+    libraryStatus = "all";
+    librarySort = "difficulty";
+    if (librarySearchInput) librarySearchInput.value = "";
+    if (libraryDifficultyFilter) libraryDifficultyFilter.value = "all";
+    if (libraryPercentFilter) libraryPercentFilter.value = "all";
+    if (libraryStatusFilter) libraryStatusFilter.value = "all";
+    if (librarySortInput) librarySortInput.value = "difficulty";
+    renderLibrary();
   });
 }
 
@@ -1864,30 +1926,176 @@ function renderSearchResults() {
   });
 }
 
+function youtubeIdFromUrl(value) {
+  const text = String(value || "");
+  const match = text.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([A-Za-z0-9_-]{6,})/)
+    || text.match(/[?&]v=([A-Za-z0-9_-]{6,})/);
+  return match ? match[1] : "";
+}
+
+function libraryStatForTrack(track) {
+  const stats = Array.isArray(state && state.soloStats) ? state.soloStats : [];
+  const videoId = String(track.videoId || youtubeIdFromUrl(track.audioUrl)).trim();
+  const audioUrl = String(track.audioUrl || "").trim();
+  const anime = normalizeAnswerText(track.anime || "");
+  const opening = normalizeAnswerText(track.opening || "");
+
+  return stats.find(function (entry) {
+    if (videoId && String(entry.videoId || "").trim() === videoId) return true;
+    if (audioUrl && String(entry.audioUrl || "").trim() === audioUrl) return true;
+    const entryAnime = normalizeAnswerText(entry.anime || "");
+    const entryOpening = normalizeAnswerText(entry.opening || "");
+    return anime && entryAnime === anime && (!opening || entryOpening === opening);
+  }) || null;
+}
+
+function libraryProblemInfo(track, stat) {
+  const quality = (stat && stat.qualityStatus) || track.qualityStatus || "ok";
+  const reports = Number((stat && stat.reportsCount) || 0);
+  return {
+    quality: quality,
+    reports: reports,
+    mediaError: Boolean(stat && stat.mediaError),
+    disabled: Boolean(stat && stat.disabled),
+    missingMeta: !track.coverUrl || !track.description,
+    noAudio: !track.audioUrl && !track.fallbackAudioUrl,
+    percent: stat && Number.isFinite(Number(stat.percent)) ? Number(stat.percent) : null,
+    attempts: stat ? Number(stat.attempts || 0) : 0
+  };
+}
+
+function libraryTrackSearchText(track) {
+  return normalizeAnswerText([
+    track.anime,
+    track.opening,
+    track.audioUrl,
+    track.fallbackAudioUrl,
+    track.sourceTitle,
+    track.description,
+    Array.isArray(track.aliases) ? track.aliases.join(" ") : track.aliases
+  ].join(" "));
+}
+
+function libraryStatusMatches(track, stat) {
+  const info = libraryProblemInfo(track, stat);
+  if (libraryStatus === "reported") return info.reports > 0 || info.quality === "reported";
+  if (libraryStatus === "broken") return info.mediaError || info.disabled || info.quality === "needs_fix";
+  if (libraryStatus === "missing_meta") return info.missingMeta;
+  if (libraryStatus === "no_audio") return info.noAudio;
+  if (libraryStatus === "problem") {
+    return info.mediaError || info.disabled || info.reports > 0 || info.quality === "needs_fix"
+      || info.quality === "reported" || info.missingMeta || info.noAudio;
+  }
+  return true;
+}
+
+function libraryPercentMatches(stat) {
+  const attempts = Number((stat && stat.attempts) || 0);
+  const percent = Number((stat && stat.percent) || 0);
+  if (libraryPercent === "no_stats") return attempts <= 0;
+  if (libraryPercent === "100_80") return attempts > 0 && percent >= 80;
+  if (libraryPercent === "79_60") return attempts > 0 && percent >= 60 && percent < 80;
+  if (libraryPercent === "59_40") return attempts > 0 && percent >= 40 && percent < 60;
+  if (libraryPercent === "39_20") return attempts > 0 && percent >= 20 && percent < 40;
+  if (libraryPercent === "19_0") return attempts > 0 && percent >= 0 && percent < 20;
+  return true;
+}
+
+function filteredLibraryTracks(tracks) {
+  const search = normalizeAnswerText(librarySearch);
+  return tracks.filter(function (track) {
+    const stat = libraryStatForTrack(track);
+    if (libraryDifficulty !== "all" && (track.difficulty || "medium") !== libraryDifficulty) return false;
+    if (!libraryPercentMatches(stat)) return false;
+    if (search && !libraryTrackSearchText(track).includes(search)) return false;
+    return libraryStatusMatches(track, stat);
+  }).sort(function (a, b) {
+    const statA = libraryStatForTrack(a);
+    const statB = libraryStatForTrack(b);
+    const infoA = libraryProblemInfo(a, statA);
+    const infoB = libraryProblemInfo(b, statB);
+    if (librarySort === "name") return String(a.anime || "").localeCompare(String(b.anime || ""));
+    if (librarySort === "hardest") {
+      const percentA = infoA.attempts ? infoA.percent : 101;
+      const percentB = infoB.attempts ? infoB.percent : 101;
+      if (percentA !== percentB) return percentA - percentB;
+      if (infoB.attempts !== infoA.attempts) return infoB.attempts - infoA.attempts;
+      return String(a.anime || "").localeCompare(String(b.anime || ""));
+    }
+    if (librarySort === "most_reports") {
+      if (infoB.reports !== infoA.reports) return infoB.reports - infoA.reports;
+      if (Number(infoB.mediaError) !== Number(infoA.mediaError)) return Number(infoB.mediaError) - Number(infoA.mediaError);
+      return String(a.anime || "").localeCompare(String(b.anime || ""));
+    }
+    const order = Object.keys(DIFFICULTY_LABELS);
+    const diffA = order.indexOf(a.difficulty || "medium");
+    const diffB = order.indexOf(b.difficulty || "medium");
+    if (diffA !== diffB) return diffA - diffB;
+    return String(a.anime || "").localeCompare(String(b.anime || ""));
+  });
+}
+
+function libraryBadges(track, stat) {
+  const info = libraryProblemInfo(track, stat);
+  const badges = node("div", "library-badges");
+  if (info.percent != null) badges.append(node("span", "library-badge", info.percent + "%"));
+  if (info.reports > 0) badges.append(node("span", "library-badge warning", info.reports + " zgl."));
+  if (info.mediaError || info.quality === "needs_fix") badges.append(node("span", "library-badge danger", "blad"));
+  if (info.missingMeta) badges.append(node("span", "library-badge", "meta"));
+  if (info.noAudio) badges.append(node("span", "library-badge danger", "audio"));
+  if (!badges.childNodes.length) badges.append(node("span", "library-badge ok", "ok"));
+  return badges;
+}
+
 function renderLibrary() {
   if (!libraryList || !profile || profile.role !== "moderator") return;
   const tracks = state.libraryTracks || [];
+  const filteredTracks = filteredLibraryTracks(tracks);
   libraryList.replaceChildren();
-  libraryCount.textContent = String(tracks.length);
+  libraryCount.textContent = filteredTracks.length === tracks.length
+    ? String(tracks.length)
+    : filteredTracks.length + " / " + tracks.length;
+  if (librarySearchInput && librarySearchInput.value !== librarySearch) librarySearchInput.value = librarySearch;
+  if (libraryDifficultyFilter && libraryDifficultyFilter.value !== libraryDifficulty) libraryDifficultyFilter.value = libraryDifficulty;
+  if (libraryPercentFilter && libraryPercentFilter.value !== libraryPercent) libraryPercentFilter.value = libraryPercent;
+  if (libraryStatusFilter && libraryStatusFilter.value !== libraryStatus) libraryStatusFilter.value = libraryStatus;
+  if (librarySortInput && librarySortInput.value !== librarySort) librarySortInput.value = librarySort;
 
   if (!tracks.length) {
     libraryList.append(node("p", "muted empty-row", "Biblioteka jest pusta."));
     return;
   }
 
-  Object.keys(DIFFICULTY_LABELS).forEach(function (difficulty) {
-    const items = tracks.filter((track) => (track.difficulty || "medium") === difficulty);
+  if (!filteredTracks.length) {
+    libraryList.append(node("p", "muted empty-row", "Brak openingow dla wybranych filtrow."));
+    return;
+  }
+
+  const groups = librarySort === "difficulty"
+    ? Object.keys(DIFFICULTY_LABELS).map(function (difficulty) {
+      return {
+        title: DIFFICULTY_LABELS[difficulty],
+        items: filteredTracks.filter((track) => (track.difficulty || "medium") === difficulty)
+      };
+    })
+    : [{ title: "Wyniki", items: filteredTracks }];
+
+  groups.forEach(function (group) {
+    const items = group.items;
     if (!items.length) return;
 
     const section = node("div", "library-difficulty");
     const title = node("div", "library-difficulty-title");
-    title.append(node("b", "", DIFFICULTY_LABELS[difficulty]), node("span", "", items.length + " openingow"));
+    title.append(node("b", "", group.title), node("span", "", items.length + " openingow"));
     const list = node("div", "library-difficulty-list");
 
     items.forEach(function (track) {
+      const stat = libraryStatForTrack(track);
+      const info = libraryProblemInfo(track, stat);
       const row = node("div", "library-row");
+      if (info.mediaError || info.quality === "needs_fix" || info.noAudio) row.classList.add("library-row-problem");
       const meta = node("div", "track-meta");
-      meta.append(node("b", "", track.anime || "Anime bez nazwy"), node("span", "", trackSubtitle(track)));
+      meta.append(node("b", "", track.anime || "Anime bez nazwy"), node("span", "", trackSubtitle(track)), libraryBadges(track, stat));
 
       const actions = node("div", "track-actions");
       const difficulty = difficultySelect(track.difficulty || "medium");

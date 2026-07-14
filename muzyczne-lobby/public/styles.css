@@ -1893,6 +1893,65 @@ h2 {
   gap: 10px;
 }
 
+.library-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) repeat(4, minmax(140px, auto)) auto;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.library-toolbar input,
+.library-toolbar select,
+.library-toolbar button {
+  min-height: 44px;
+}
+
+.library-row-problem {
+  border-color: rgba(255, 114, 170, 0.44);
+  background:
+    linear-gradient(90deg, rgba(255, 114, 170, 0.1), transparent 34%),
+    rgba(39, 31, 45, 0.82);
+}
+
+.library-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.library-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border: 1px solid rgba(242, 167, 199, 0.22);
+  border-radius: 999px;
+  padding: 0 8px;
+  color: #ffd3e3;
+  background: rgba(255, 211, 227, 0.08);
+  font-size: 0.76rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.library-badge.ok {
+  color: #21131a;
+  border-color: transparent;
+  background: var(--teal);
+}
+
+.library-badge.warning {
+  color: #21131a;
+  border-color: transparent;
+  background: var(--amber);
+}
+
+.library-badge.danger {
+  color: #fff8fb;
+  border-color: rgba(255, 114, 170, 0.46);
+  background: rgba(255, 114, 170, 0.34);
+}
+
 .library-difficulty-title {
   display: flex;
   align-items: center;
@@ -2024,7 +2083,8 @@ h2 {
   .settings-form,
   .difficulty-form,
   .playlist-form,
-  .youtube-search-form {
+  .youtube-search-form,
+  .library-toolbar {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -2062,6 +2122,10 @@ h2 {
   .difficulty-row {
     grid-template-columns: 1fr 100px 100px;
   }
+
+  .library-row {
+    align-items: start;
+  }
 }
 
 @media (max-width: 640px) {
@@ -2093,6 +2157,31 @@ h2 {
     flex-direction: column;
   }
 
+  .topbar {
+    gap: 12px;
+  }
+
+  .topbar h1 {
+    font-size: 1.72rem;
+    line-height: 1.05;
+  }
+
+  .track-head {
+    gap: 12px;
+  }
+
+  .track-head h2 {
+    font-size: clamp(1.9rem, 11vw, 2.6rem);
+  }
+
+  .phase-pill {
+    width: 64px;
+    height: 64px;
+    min-height: 64px;
+    max-height: 64px;
+    font-size: 0.76rem;
+  }
+
   .room-tools,
   .control-row,
   .login-actions,
@@ -2103,9 +2192,28 @@ h2 {
   .settings-form,
   .difficulty-form,
   .playlist-form,
-  .youtube-search-form {
+  .youtube-search-form,
+  .library-toolbar {
     grid-template-columns: 1fr;
     width: 100%;
+  }
+
+  .admin-panel-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 0 -6px;
+    overflow-x: auto;
+    padding: 8px 6px;
+    scroll-snap-type: x proximity;
+  }
+
+  .admin-panel-card {
+    flex: 0 0 auto;
+    min-width: 132px;
+    min-height: 48px;
+    padding: 10px;
+    font-size: 0.78rem;
+    scroll-snap-align: start;
   }
 
   .admin-control-row {
@@ -2156,6 +2264,15 @@ h2 {
     width: min(280px, 82vw);
   }
 
+  .play-surface {
+    min-height: auto;
+    gap: 20px;
+  }
+
+  .progress-meter {
+    height: 22px;
+  }
+
   .score-row,
   .person-row,
   .track-row,
@@ -2166,6 +2283,10 @@ h2 {
   .admin-report-row,
   .library-row {
     grid-template-columns: 1fr;
+  }
+
+  .library-badges {
+    gap: 5px;
   }
 
   .score-value,
@@ -2185,5 +2306,13 @@ h2 {
 
   .admin-report-actions {
     justify-content: flex-start;
+  }
+
+  .track-actions select,
+  .track-actions button,
+  .search-actions button,
+  .search-actions select,
+  .library-toolbar button {
+    width: 100%;
   }
 }

@@ -338,6 +338,41 @@
               <h2>Biblioteka openingow</h2>
               <span id="libraryCount">0</span>
             </div>
+            <div class="library-toolbar" aria-label="Filtrowanie biblioteki">
+              <input id="librarySearchInput" placeholder="Szukaj anime, openingu albo linku" aria-label="Szukaj w bibliotece" />
+              <select id="libraryDifficultyFilter" aria-label="Filtr poziomu trudnosci">
+                <option value="all">Wszystkie poziomy</option>
+                <option value="very_easy">Very easy</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+                <option value="impossible">Impossible</option>
+              </select>
+              <select id="libraryPercentFilter" aria-label="Filtr procentow zgadniec">
+                <option value="all">Wszystkie procenty</option>
+                <option value="100_80">100-80%</option>
+                <option value="79_60">79-60%</option>
+                <option value="59_40">59-40%</option>
+                <option value="39_20">39-20%</option>
+                <option value="19_0">19-0%</option>
+                <option value="no_stats">Brak statystyk</option>
+              </select>
+              <select id="libraryStatusFilter" aria-label="Filtr statusu biblioteki">
+                <option value="all">Wszystkie statusy</option>
+                <option value="problem">Do sprawdzenia</option>
+                <option value="reported">Zgloszone</option>
+                <option value="broken">Blad ladowania</option>
+                <option value="missing_meta">Brak opisu/okladki</option>
+                <option value="no_audio">Brak audio/linku</option>
+              </select>
+              <select id="librarySortInput" aria-label="Sortowanie biblioteki">
+                <option value="difficulty">Po poziomach</option>
+                <option value="name">Nazwa A-Z</option>
+                <option value="hardest">Najtrudniejsze</option>
+                <option value="most_reports">Najwiecej zgloszen</option>
+              </select>
+              <button class="ghost" id="libraryClearFiltersButton" type="button">Wyczysc</button>
+            </div>
             <div class="library-list" id="libraryList"></div>
           </div>
 

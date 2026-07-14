@@ -5,3 +5,10 @@ services:
     plan: free
     buildCommand: yarn
     startCommand: node server.js
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+    disk:
+      name: muzyczne-lobby-data
+      mountPath: /var/data
+      sizeGB: 1

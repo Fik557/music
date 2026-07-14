@@ -2241,7 +2241,7 @@ function startMediaLoadWatch(track) {
   if (mediaReadySentKey === key || mediaErrorSentKey === key) return;
   if (mediaLoadTimer) return;
   mediaLoadTimer = setTimeout(function () {
-    reportMediaReady(track);
+    reportMediaError(track, "Opening nie zaladowal sie w 5 sekund.");
   }, MEDIA_LOAD_TIMEOUT_MS);
 }
 

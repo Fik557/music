@@ -7,12 +7,15 @@ const PORT = Number((globalThis.process && process.env && process.env.PORT) || g
 const MODERATOR_PASSWORD = "Kochamkotki";
 const PUBLIC_DIR = path.join(__dirname, "public");
 const MUSIC_DIR = path.join(PUBLIC_DIR, "music");
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "rooms.json");
+const DATA_BACKUP_FILE = path.join(DATA_DIR, "rooms.backup.json");
+const SEED_DATA_FILE = path.join(__dirname, "data", "rooms.json");
 const persistedRoomConfigs = loadPersistedRooms();
 const rooms = new Map();
 const sockets = new Map();
 const soloStreaks = new Map();
+const animeTitleLookupCache = new Map();
 const ANSWER_TIME_LIMIT = 15;
 const SOLO_CLIP_DURATION = 15;
 const SOLO_SEGMENT_SPLIT = 7.5;
@@ -80,6 +83,37 @@ function cleanText(value, fallback, max) {
 
 function rawText(value, max) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, max || 120);
+}
+
+function hasJapaneseText(value) {
+  return /[\u3040-\u30ff\u3400-\u9fff]/.test(String(value || ""));
+}
+
+function cleanAnimeTitlePart(value) {
+  return rawText(value, 180)
+    .replace(/^TV\s+Anime\s+/i, "")
+    .replace(/^Anime\s+/i, "")
+    .replace(/[「」『』【】]/g, "")
+    .replace(/\s+[-|]\s*(?:Opening|OP|NCOP|Creditless).*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitCombinedAnimeTitle(value) {
+  const text = cleanAnimeTitlePart(value);
+  const parts = text.split(/\s+\/\s+/).map(cleanAnimeTitlePart).filter(Boolean);
+  if (parts.length >= 2) return { englishTitle: parts[0], romajiTitle: parts.slice(1).join(" / ") };
+  return { englishTitle: text, romajiTitle: text };
+}
+
+function combinedAnimeTitle(englishTitle, romajiTitle, fallback) {
+  const fallbackParts = splitCombinedAnimeTitle(fallback);
+  const english = cleanAnimeTitlePart(englishTitle) || fallbackParts.englishTitle;
+  const romaji = cleanAnimeTitlePart(romajiTitle) || fallbackParts.romajiTitle || english;
+  const safeEnglish = english || romaji || "Anime bez nazwy";
+  const safeRomaji = romaji || safeEnglish;
+  if (normalizeAnswer(safeEnglish) === normalizeAnswer(safeRomaji)) return safeEnglish;
+  return safeEnglish + " / " + safeRomaji;
 }
 
 function cleanImageUrl(value, fallback) {
@@ -216,19 +250,26 @@ function formatDurationSeconds(value) {
 }
 
 function loadPersistedRooms() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) return {};
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8")) || {};
-  } catch (error) {
-    console.warn("Nie udalo sie wczytac zapisanych openingow:", error.message);
-    return {};
+  const candidates = [DATA_FILE, DATA_BACKUP_FILE];
+  if (path.resolve(SEED_DATA_FILE) !== path.resolve(DATA_FILE)) candidates.push(SEED_DATA_FILE);
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      return JSON.parse(fs.readFileSync(filePath, "utf8")) || {};
+    } catch (error) {
+      console.warn("Nie udalo sie wczytac zapisanych openingow z " + filePath + ":", error.message);
+    }
   }
+  return {};
 }
 
 function savePersistedRooms() {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(DATA_FILE, JSON.stringify(persistedRoomConfigs, null, 2), "utf8");
+    const tempFile = DATA_FILE + ".tmp";
+    fs.writeFileSync(tempFile, JSON.stringify(persistedRoomConfigs, null, 2), "utf8");
+    if (fs.existsSync(DATA_FILE)) fs.copyFileSync(DATA_FILE, DATA_BACKUP_FILE);
+    fs.renameSync(tempFile, DATA_FILE);
   } catch (error) {
     console.warn("Nie udalo sie zapisac openingow:", error.message);
   }
@@ -243,10 +284,11 @@ function restoreTracks(tracks) {
     .map(function (track) {
       const startAtFirst = numberInRange(track.startAtFirst, numberInRange(track.startAt, 0, 0, 36000), 0, 36000);
       const startAtSecond = numberInRange(track.startAtSecond, startAtFirst + 5, 0, 36000);
-      const englishTitle = rawText(track.englishTitle || track.animeEnglish || track.titleEnglish, 120);
-      const romajiTitle = rawText(track.romajiTitle || track.animeRomaji || track.titleRomaji, 120);
+      const titleParts = splitCombinedAnimeTitle(track.anime || track.title);
+      const englishTitle = cleanAnimeTitlePart(track.englishTitle || track.animeEnglish || track.titleEnglish || titleParts.englishTitle);
+      const romajiTitle = cleanAnimeTitlePart(track.romajiTitle || track.animeRomaji || track.titleRomaji || titleParts.romajiTitle);
       const sourceTitle = rawText(track.sourceTitle || track.rawTitle, 180);
-      const anime = rawText(track.anime || track.title || [englishTitle, romajiTitle].filter(Boolean).join(" / "), 180) || "Anime bez nazwy";
+      const anime = combinedAnimeTitle(englishTitle, romajiTitle, track.anime || track.title);
       const opening = rawText(track.opening || track.artist, 120);
       const videoId = detectYouTubeVideoId(track.audioUrl);
       const source = videoId ? "youtube" : "audio";
@@ -508,11 +550,13 @@ function nextRandomSoloTrack(socket, tracks) {
 }
 
 function updateSoloStatMeta(track, entry) {
-  entry.anime = rawText(track.anime, 180) || "Anime bez nazwy";
+  entry.anime = combinedAnimeTitle(track.englishTitle, track.romajiTitle, track.anime);
   entry.opening = rawText(track.opening, 120);
   entry.coverUrl = rawText(track.coverUrl, 700);
   entry.audioUrl = rawText(track.audioUrl, 700);
   entry.videoId = rawText(track.videoId, 40);
+  entry.englishTitle = cleanAnimeTitlePart(track.englishTitle);
+  entry.romajiTitle = cleanAnimeTitlePart(track.romajiTitle);
   entry.difficulty = difficultyExists(track.difficulty) ? track.difficulty : "medium";
 }
 
@@ -557,9 +601,11 @@ function publicSoloStats(currentKey) {
     if (!rowsByKey[key]) {
       rowsByKey[key] = {
         key: key,
-        anime: rawText(entry.anime || (track && track.anime), 180) || "Anime bez nazwy",
+        anime: combinedAnimeTitle(entry.englishTitle || (track && track.englishTitle), entry.romajiTitle || (track && track.romajiTitle), entry.anime || (track && track.anime)),
         opening: rawText(entry.opening || (track && track.opening), 120),
         coverUrl: rawText(entry.coverUrl || (track && track.coverUrl), 700),
+        englishTitle: cleanAnimeTitlePart(entry.englishTitle || (track && track.englishTitle)),
+        romajiTitle: cleanAnimeTitlePart(entry.romajiTitle || (track && track.romajiTitle)),
         difficulty: difficultyExists(entry.difficulty) ? entry.difficulty : (difficultyExists(track && track.difficulty) ? track.difficulty : "medium"),
         difficultyLabel: difficultyLabel(difficultyExists(entry.difficulty) ? entry.difficulty : (difficultyExists(track && track.difficulty) ? track.difficulty : "medium")),
         attempts: 0,
@@ -656,8 +702,10 @@ function publicSoloReports() {
         message: rawText(report.message, 700),
         trackKey: rawText(report.trackKey, 140),
         trackId: rawText(report.trackId, 80),
-        anime: rawText(report.anime, 180) || "Anime bez nazwy",
+        anime: combinedAnimeTitle(report.englishTitle, report.romajiTitle, report.anime),
         opening: rawText(report.opening, 120),
+        englishTitle: cleanAnimeTitlePart(report.englishTitle),
+        romajiTitle: cleanAnimeTitlePart(report.romajiTitle),
         difficulty: difficultyExists(report.difficulty) ? report.difficulty : "medium",
         difficultyLabel: difficultyLabel(report.difficulty),
         coverUrl: rawText(report.coverUrl, 700),
@@ -1113,9 +1161,12 @@ function parseOpeningTitle(title) {
 
 function trackFromYouTubeVideo(video, difficulty) {
   const meta = parseOpeningTitle(video.title || "");
+  const titleParts = splitCombinedAnimeTitle(meta.anime);
   return {
-    anime: meta.anime,
+    anime: combinedAnimeTitle(titleParts.englishTitle, titleParts.romajiTitle, meta.anime),
     opening: meta.opening,
+    englishTitle: titleParts.englishTitle,
+    romajiTitle: titleParts.romajiTitle,
     coverUrl: youtubeThumbnailUrl(video.videoId),
     description: "",
     difficulty: difficultyExists(difficulty) ? difficulty : "medium",
@@ -1126,6 +1177,70 @@ function trackFromYouTubeVideo(video, difficulty) {
     startAtFirst: 0,
     startAtSecond: 5
   };
+}
+
+function animeLookupQuery(track) {
+  const candidates = [
+    track && track.englishTitle,
+    track && track.romajiTitle,
+    track && track.anime,
+    track && track.sourceTitle
+  ].map(cleanAnimeTitlePart).filter(Boolean);
+  const value = candidates.find(function (candidate) {
+    return !/^youtube opening/i.test(candidate) && !hasJapaneseText(candidate);
+  }) || candidates[0] || "";
+  return rawText(value.replace(/\s+\/\s+.*$/, ""), 100);
+}
+
+async function fetchAnimeTitleMeta(query) {
+  const cleanQuery = cleanAnimeTitlePart(query);
+  if (!cleanQuery) return null;
+  const cacheKey = normalizeAnswer(cleanQuery);
+  if (animeTitleLookupCache.has(cacheKey)) return animeTitleLookupCache.get(cacheKey);
+
+  try {
+    const response = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "user-agent": "AnimeOpeningQuiz"
+      },
+      body: JSON.stringify({
+        query: "query ($search: String) { Media(search: $search, type: ANIME) { title { english romaji } } }",
+        variables: { search: cleanQuery }
+      })
+    });
+    if (!response.ok) throw new Error("AniList error");
+    const payload = await response.json();
+    const title = payload && payload.data && payload.data.Media && payload.data.Media.title;
+    const meta = title ? {
+      englishTitle: cleanAnimeTitlePart(title.english || title.romaji),
+      romajiTitle: cleanAnimeTitlePart(title.romaji || title.english)
+    } : null;
+    animeTitleLookupCache.set(cacheKey, meta);
+    return meta;
+  } catch (error) {
+    animeTitleLookupCache.set(cacheKey, null);
+    return null;
+  }
+}
+
+async function trackFromYouTubeVideoWithTitles(video, difficulty) {
+  const track = trackFromYouTubeVideo(video, difficulty);
+  const needsLookup = !track.englishTitle
+    || !track.romajiTitle
+    || hasJapaneseText(track.englishTitle)
+    || hasJapaneseText(track.romajiTitle)
+    || normalizeAnswer(track.englishTitle) === normalizeAnswer(track.sourceTitle)
+    || normalizeAnswer(track.romajiTitle) === normalizeAnswer(track.sourceTitle);
+  const meta = needsLookup ? await fetchAnimeTitleMeta(animeLookupQuery(track)) : null;
+  if (meta) {
+    track.englishTitle = meta.englishTitle || track.englishTitle;
+    track.romajiTitle = meta.romajiTitle || track.romajiTitle;
+  }
+  track.anime = combinedAnimeTitle(track.englishTitle, track.romajiTitle, track.anime);
+  return track;
 }
 
 function titleNearVideoId(html, videoId) {
@@ -1420,16 +1535,19 @@ async function searchYouTubeTracks(payload) {
   const videos = extractPlaylistVideosFromHtml(html).slice(0, 30);
   if (!videos.length) return { error: "Nie znaleziono wynikow dla tego openingu." };
 
+  const results = [];
+  for (const video of videos) {
+    const track = await trackFromYouTubeVideoWithTitles(video, difficulty);
+    results.push(Object.assign(track, {
+      id: id("search_"),
+      videoId: video.videoId,
+      source: "youtube",
+      rawTitle: video.title
+    }));
+  }
+
   return {
-    results: videos.map(function (video) {
-      const track = trackFromYouTubeVideo(video, difficulty);
-      return Object.assign(track, {
-        id: id("search_"),
-        videoId: video.videoId,
-        source: "youtube",
-        rawTitle: video.title
-      });
-    })
+    results: results
   };
 }
 
@@ -1478,7 +1596,7 @@ async function importPlaylistTracks(room, payload) {
 
   for (const video of videos) {
     const preparedVideo = await fillMissingVideoTitle(video);
-    const normalized = normalizeTrack(trackFromYouTubeVideo(preparedVideo, difficulty), null);
+    const normalized = normalizeTrack(await trackFromYouTubeVideoWithTitles(preparedVideo, difficulty), null);
 
     if (!normalized.error && !existingVideoIds[normalized.track.videoId]) {
       normalized.track.id = id("library_");
@@ -1527,10 +1645,11 @@ function normalizeTrack(payload, existing) {
   const firstStartFallback = existing ? existing.startAtFirst : 0;
   const startAtFirst = numberInRange(payload.startAtFirst, numberInRange(payload.startAt, firstStartFallback, 0, 36000), 0, 36000);
   const startAtSecond = numberInRange(payload.startAtSecond, existing ? existing.startAtSecond : startAtFirst + 5, 0, 36000);
-  const englishTitle = rawText(payload.englishTitle || payload.animeEnglish || payload.titleEnglish || (existing && existing.englishTitle), 120);
-  const romajiTitle = rawText(payload.romajiTitle || payload.animeRomaji || payload.titleRomaji || (existing && existing.romajiTitle), 120);
+  const titleParts = splitCombinedAnimeTitle(payload.anime || payload.title || (existing && existing.anime));
+  const englishTitle = cleanAnimeTitlePart(payload.englishTitle || payload.animeEnglish || payload.titleEnglish || (existing && existing.englishTitle) || titleParts.englishTitle);
+  const romajiTitle = cleanAnimeTitlePart(payload.romajiTitle || payload.animeRomaji || payload.titleRomaji || (existing && existing.romajiTitle) || titleParts.romajiTitle);
   const sourceTitle = rawText(payload.sourceTitle || payload.rawTitle || (existing && existing.sourceTitle), 180);
-  const anime = rawText(payload.anime || payload.title || [englishTitle, romajiTitle].filter(Boolean).join(" / "), 180) || (source === "youtube" ? "Anime z YouTube" : "Anime bez nazwy");
+  const anime = combinedAnimeTitle(englishTitle, romajiTitle, payload.anime || payload.title || (existing && existing.anime) || (source === "youtube" ? "Anime z YouTube" : "Anime bez nazwy"));
   const opening = rawText(payload.opening || payload.artist, 120);
   const coverUrl = cleanImageUrl(payload.coverUrl || payload.cover || payload.thumbnailUrl, existing ? existing.coverUrl : youtubeThumbnailUrl(videoId));
   const description = rawText(payload.description || payload.animeDescription || payload.summary || (existing && existing.description), 420);
@@ -1854,7 +1973,8 @@ function failSoloMedia(socket, reason) {
   const key = soloTrackKey(session.track);
   if (!socket.soloLoadFailures) socket.soloLoadFailures = {};
   if (key) socket.soloLoadFailures[key] = true;
-  markSoloTrackLoadError(session.track, cleanReason);
+  const permanentError = /youtube|kod|blokuje|nie ma poprawnego id|krotszy niz ustawiony start/i.test(cleanReason);
+  if (permanentError) markSoloTrackLoadError(session.track, cleanReason);
 
   session.phase = "idle";
   session.startedAt = 0;
@@ -1931,8 +2051,10 @@ function recordSoloReport(socket, payload) {
     message: message,
     trackKey: soloTrackKey(track),
     trackId: rawText(track.id, 80),
-    anime: rawText(track.anime, 180) || "Anime bez nazwy",
+    anime: combinedAnimeTitle(track.englishTitle, track.romajiTitle, track.anime),
     opening: rawText(track.opening, 120),
+    englishTitle: cleanAnimeTitlePart(track.englishTitle),
+    romajiTitle: cleanAnimeTitlePart(track.romajiTitle),
     difficulty: difficultyExists(track.difficulty) ? track.difficulty : "medium",
     coverUrl: rawText(track.coverUrl, 700),
     description: rawText(track.description, 420),
@@ -2003,7 +2125,8 @@ function handleSoloAction(socket, payload) {
     const session = socket.soloSession;
     const key = rawText(payload.key, 240);
     if (!session || !session.track || session.answered || key !== soloTrackKey(session.track)) return;
-    return failSoloMedia(socket, payload.reason);
+    if (failSoloMedia(socket, payload.reason)) return startSoloRound(socket, true);
+    return;
   }
 
   if (action === "answer") {
@@ -2297,8 +2420,10 @@ function updateReportMetaForTrack(oldKey, track) {
     if (rawText(report.trackKey, 140) !== oldKey && rawText(report.trackId, 80) !== rawText(track.id, 80)) return;
     report.trackKey = newKey;
     report.trackId = rawText(track.id, 80);
-    report.anime = rawText(track.anime, 180) || "Anime bez nazwy";
+    report.anime = combinedAnimeTitle(track.englishTitle, track.romajiTitle, track.anime);
     report.opening = rawText(track.opening, 120);
+    report.englishTitle = cleanAnimeTitlePart(track.englishTitle);
+    report.romajiTitle = cleanAnimeTitlePart(track.romajiTitle);
     report.difficulty = difficultyExists(track.difficulty) ? track.difficulty : "medium";
     report.coverUrl = rawText(track.coverUrl, 700);
     report.description = rawText(track.description, 420);
@@ -3125,7 +3250,8 @@ setInterval(function () {
     if (socket.role === "solo" && session && session.phase === "loading" && !session.answered) {
       const loadingStartedAt = Number(session.loadingStartedAt || 0);
       if (loadingStartedAt > 0 && now() - loadingStartedAt >= SOLO_MEDIA_LOAD_TIMEOUT) {
-        startSoloPlayback(socket);
+        failSoloMedia(socket, "Opening nie zaladowal sie w 5 sekund.");
+        startSoloRound(socket, true);
         return;
       }
     }

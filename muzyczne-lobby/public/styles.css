@@ -3048,10 +3048,10 @@ body[data-phase="ended"] .phase-pill {
 }
 
 .solo-day-streak-head .eyebrow {
-  overflow: hidden;
   color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 0.68rem;
+  line-height: 1.15;
+  white-space: normal;
 }
 
 .solo-day-streak-head strong {

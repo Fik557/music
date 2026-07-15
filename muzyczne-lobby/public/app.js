@@ -1189,6 +1189,20 @@ if (adminPanelTabs) {
     adminNavDropdowns.forEach(function (dropdown) { dropdown.open = false; });
     setActiveAdminPanel(button.dataset.adminPanelTarget || "center", true);
   });
+
+  adminNavDropdowns.forEach(function (dropdown) {
+    dropdown.addEventListener("mouseenter", function () {
+      if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+      adminNavDropdowns.forEach(function (otherDropdown) {
+        otherDropdown.open = otherDropdown === dropdown;
+      });
+    });
+
+    dropdown.addEventListener("mouseleave", function () {
+      if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+      dropdown.open = false;
+    });
+  });
 }
 
 window.addEventListener("hashchange", function () {

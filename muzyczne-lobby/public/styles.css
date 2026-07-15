@@ -3632,6 +3632,27 @@ body[data-view="moderator"] .topbar h1 {
   position: relative;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .admin-nav-dropdown::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    height: 10px;
+  }
+
+  .admin-nav-dropdown:hover > summary {
+    color: #fff;
+    background: #211e23;
+  }
+
+  .admin-nav-dropdown:hover > .admin-nav-menu,
+  .admin-nav-dropdown:focus-within > .admin-nav-menu {
+    display: grid;
+  }
+}
+
 .admin-nav-dropdown > summary {
   cursor: pointer;
   list-style-position: inside;

@@ -1853,6 +1853,76 @@ h2 {
   min-height: 48px;
 }
 
+.track-edit-preview {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(242, 167, 199, 0.2);
+  border-radius: 8px;
+  background: rgba(18, 15, 20, 0.72);
+}
+
+.track-preview-head,
+.track-preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.track-preview-head {
+  min-width: 0;
+  justify-content: space-between;
+}
+
+.track-preview-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-preview-controls {
+  justify-content: flex-end;
+}
+
+.track-preview-controls button {
+  min-height: 42px;
+}
+
+.track-preview-controls .icon-only {
+  width: 42px;
+  min-width: 42px;
+  padding: 0;
+}
+
+.track-preview-media {
+  grid-column: 1 / -1;
+  display: grid;
+  min-height: 64px;
+  place-items: center;
+  overflow: hidden;
+  border-top: 1px solid rgba(242, 167, 199, 0.14);
+  padding-top: 10px;
+}
+
+.track-preview-media audio,
+.track-preview-media iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+}
+
+.track-preview-media iframe {
+  height: 210px;
+}
+
+.track-save-status {
+  align-self: center;
+  grid-column: span 4;
+  min-width: 0;
+}
+
 .settings-form {
   grid-template-columns: repeat(3, minmax(120px, 1fr)) auto;
   align-items: end;
@@ -2209,6 +2279,26 @@ h2 {
   .library-toolbar {
     grid-template-columns: 1fr;
     width: 100%;
+  }
+
+  .track-edit-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .track-preview-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .track-preview-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr 42px;
+    justify-content: stretch;
+  }
+
+  .track-preview-media,
+  .track-save-status {
+    grid-column: 1 / -1;
   }
 
   .admin-panel-tabs {

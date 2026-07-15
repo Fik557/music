@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#17121b" />
     <title>Anime Opening Quiz</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=11" />
+    <link rel="stylesheet" href="/styles.css?v=12" />
   </head>
   <body>
     <main class="shell">
@@ -320,8 +320,23 @@
               <input class="track-cover-input" id="trackCoverInput" placeholder="Link okladki" aria-label="Link okladki anime" />
               <textarea class="track-description-input" id="trackDescriptionInput" placeholder="Krotki opis anime" aria-label="Krotki opis anime" rows="2"></textarea>
               <textarea class="track-aliases-input" id="trackAliasesInput" placeholder="Aliasy odpowiedzi" aria-label="Aliasy odpowiedzi" rows="2"></textarea>
+              <div class="track-edit-preview hidden" id="trackEditPreview">
+                <div class="track-preview-head">
+                  <strong>Podglad piosenki</strong>
+                  <span class="muted" id="trackPreviewStatus">Wybierz fragment</span>
+                </div>
+                <div class="track-preview-controls">
+                  <button class="ghost" id="trackPreviewFirstButton" type="button" title="Odtworz pierwszy fragment"><span>&#9654;</span> Fragment 1</button>
+                  <button class="ghost" id="trackPreviewSecondButton" type="button" title="Odtworz drugi fragment"><span>&#9654;</span> Fragment 2</button>
+                  <button class="ghost icon-only" id="trackPreviewStopButton" type="button" title="Zatrzymaj podglad" aria-label="Zatrzymaj podglad"><span>&#9632;</span></button>
+                </div>
+                <div class="track-preview-media" id="trackPreviewMedia">
+                  <p class="muted">Podglad pojawi sie podczas edycji.</p>
+                </div>
+              </div>
               <button class="primary" id="trackSubmitButton" type="submit">Dodaj</button>
               <button class="ghost hidden" id="cancelEditButton" type="button">Anuluj</button>
+              <span class="track-save-status muted" id="trackSaveStatus" aria-live="polite"></span>
             </form>
             <div class="track-list" id="trackList"></div>
           </div>
@@ -508,6 +523,6 @@
     <audio id="songAudio" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></audio>
     <div class="youtube-stage" id="youtubePlayer" aria-hidden="true"></div>
     <div class="toast hidden" id="toast"></div>
-    <script src="/app.js?v=11"></script>
+    <script src="/app.js?v=12"></script>
   </body>
 </html>

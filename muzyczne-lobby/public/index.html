@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#17121b" />
     <title>Anime Opening Quiz</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=16" />
+    <link rel="stylesheet" href="/styles.css?v=17" />
   </head>
   <body>
     <main class="shell">
@@ -125,33 +125,33 @@
           <div class="admin-site-links">
             <button class="admin-panel-card active" type="button" data-admin-panel-target="center">Centrum</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="rooms">Gry</button>
-            <details class="admin-nav-dropdown">
-              <summary>Muzyka</summary>
+            <div class="admin-nav-dropdown">
+              <button class="admin-nav-trigger" type="button" aria-haspopup="true" aria-expanded="false">Muzyka</button>
               <div class="admin-nav-menu">
                 <button class="admin-panel-card" type="button" data-admin-panel-target="tracks">Openingi</button>
                 <button class="admin-panel-card" type="button" data-admin-panel-target="library">Biblioteka</button>
                 <button class="admin-panel-card" type="button" data-admin-panel-target="playlist">Import playlisty</button>
                 <button class="admin-panel-card" type="button" data-admin-panel-target="search">Wyszukiwarka YouTube</button>
               </div>
-            </details>
-            <details class="admin-nav-dropdown">
-              <summary>Analiza</summary>
+            </div>
+            <div class="admin-nav-dropdown">
+              <button class="admin-nav-trigger" type="button" aria-haspopup="true" aria-expanded="false">Analiza</button>
               <div class="admin-nav-menu">
                 <button class="admin-panel-card" type="button" data-admin-panel-target="stats">% zgadniec</button>
                 <button class="admin-panel-card" type="button" data-admin-panel-target="soloPlayers">Ranking solo</button>
                 <button class="admin-panel-card" type="button" data-admin-panel-target="quality">Jakosc openingow</button>
                 <button class="admin-panel-card" type="button" data-admin-panel-target="reports">Zgloszenia</button>
               </div>
-            </details>
-            <details class="admin-nav-dropdown">
-              <summary>Ustawienia</summary>
+            </div>
+            <div class="admin-nav-dropdown">
+              <button class="admin-nav-trigger" type="button" aria-haspopup="true" aria-expanded="false">Ustawienia</button>
               <div class="admin-nav-menu admin-nav-menu-right">
                 <button class="admin-panel-card" type="button" data-admin-panel-target="scoring">Punktacja</button>
                 <button class="admin-panel-card" type="button" data-admin-panel-target="blocked">Zablokowane osoby</button>
                 <button class="admin-panel-card" type="button" data-admin-panel-target="history">Historia zmian</button>
                 <button class="admin-panel-card" type="button" data-admin-panel-target="backup">Backup</button>
               </div>
-            </details>
+            </div>
           </div>
         </nav>
 
@@ -572,6 +572,6 @@
     <audio id="songAudio" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></audio>
     <div class="youtube-stage" id="youtubePlayer" aria-hidden="true"></div>
     <div class="toast hidden" id="toast"></div>
-    <script src="/app.js?v=17"></script>
+    <script src="/app.js?v=18"></script>
   </body>
 </html>

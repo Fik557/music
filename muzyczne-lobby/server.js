@@ -4278,7 +4278,7 @@ function contentType(filePath) {
 function cacheControl(filePath) {
   const extension = path.extname(filePath).toLowerCase();
   if (extension === ".html" || path.basename(filePath).toLowerCase() === "sw.js") {
-    return "no-cache";
+    return "no-store";
   }
   if ([".css", ".js", ".webmanifest"].includes(extension)) {
     return "public, max-age=3600, stale-while-revalidate=86400";

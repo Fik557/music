@@ -1,4 +1,4 @@
-const CACHE_NAME = "anime-opening-quiz-v17";
+const CACHE_NAME = "anime-opening-quiz-v19";
 const STATIC_ASSETS = [
   "/",
   "/styles.css",
@@ -40,7 +40,7 @@ self.addEventListener("fetch", function (event) {
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/music/")) return;
 
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(function () {
+    event.respondWith(fetch(request, { cache: "no-store" }).catch(function () {
       return caches.match("/");
     }));
     return;

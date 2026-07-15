@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#17121b" />
     <title>Anime Opening Quiz</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=12" />
+    <link rel="stylesheet" href="/styles.css?v=13" />
   </head>
   <body>
     <main class="shell">
@@ -240,9 +240,10 @@
             <button class="admin-panel-card" type="button" data-admin-panel-target="quality">Jakosc</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="backup">Backup</button>
             <button class="admin-panel-card" type="button" data-admin-panel-target="reports">Zgloszenia</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="history">Historia zmian</button>
           </nav>
 
-          <div class="mod-section mod-controls">
+          <div class="mod-section mod-controls" data-admin-panel="center">
             <div class="panel-title">
               <h2>Sterowanie</h2>
               <span id="modHint">administrator</span>
@@ -258,7 +259,7 @@
             </div>
           </div>
 
-          <div class="mod-section" id="buzzDecision">
+          <div class="mod-section" id="buzzDecision" data-admin-panel="center">
             <div class="panel-title">
               <h2>Pierwszy przycisk</h2>
               <span id="buzzedAtLabel">brak</span>
@@ -336,6 +337,7 @@
               </div>
               <button class="primary" id="trackSubmitButton" type="submit">Dodaj</button>
               <button class="ghost hidden" id="cancelEditButton" type="button">Anuluj</button>
+              <button class="ghost hidden" id="retryTrackSaveButton" type="button">Powtorz zmiany</button>
               <span class="track-save-status muted" id="trackSaveStatus" aria-live="polite"></span>
             </form>
             <div class="track-list" id="trackList"></div>
@@ -516,6 +518,15 @@
             </div>
             <div class="admin-report-list" id="adminReportList"></div>
           </div>
+
+          <div class="mod-section history-section" data-admin-panel="history">
+            <div class="panel-title">
+              <h2>Historia zmian</h2>
+              <span id="adminAuditCount">0 wpisow</span>
+            </div>
+            <p class="muted admin-history-lead">Zapisane i nieudane edycje openingow wykonane przez administratorow.</p>
+            <div class="admin-audit-list" id="adminAuditList"></div>
+          </div>
         </section>
       </section>
     </main>
@@ -523,6 +534,6 @@
     <audio id="songAudio" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></audio>
     <div class="youtube-stage" id="youtubePlayer" aria-hidden="true"></div>
     <div class="toast hidden" id="toast"></div>
-    <script src="/app.js?v=12"></script>
+    <script src="/app.js?v=15"></script>
   </body>
 </html>

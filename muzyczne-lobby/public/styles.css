@@ -3516,3 +3516,328 @@ body[data-phase="ended"] .phase-pill {
     min-width: 0;
   }
 }
+
+/* Klasyczny uklad podstron administratora */
+body[data-view="moderator"] {
+  background: #0e0d10;
+}
+
+body[data-view="moderator"] .shell,
+body[data-view="moderator"] .shell.admin-info-visible {
+  width: min(1440px, calc(100% - 40px));
+  padding-top: 0;
+}
+
+body[data-view="moderator"] .topbar {
+  min-height: 76px;
+  margin: 0;
+  padding: 14px 4px;
+}
+
+body[data-view="moderator"] .topbar h1 {
+  font-size: 1.65rem;
+}
+
+.admin-site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-block: 1px solid #342f35;
+  padding: 8px 4px;
+  background: rgba(14, 13, 16, 0.98);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.2);
+}
+
+.admin-site-brand {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-site-brand > div {
+  display: grid;
+  gap: 1px;
+}
+
+.admin-site-brand strong {
+  font-size: 0.88rem;
+}
+
+.admin-site-brand small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.admin-site-mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: #251820;
+  background: var(--teal);
+  font-size: 0.9rem;
+  font-weight: 1000;
+}
+
+.admin-site-links {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.admin-site-nav .admin-panel-card,
+.admin-nav-dropdown > summary {
+  width: auto;
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  padding: 0 13px;
+  color: #d7cdd3;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.82rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.admin-site-nav .admin-panel-card:hover:not(:disabled),
+.admin-nav-dropdown > summary:hover {
+  color: #fff;
+  border: 0;
+  background: #211e23;
+  box-shadow: none;
+  transform: none;
+}
+
+.admin-site-nav .admin-panel-card.active {
+  color: #fff;
+  background: transparent;
+  box-shadow: inset 0 -3px 0 var(--teal);
+}
+
+.admin-nav-dropdown {
+  position: relative;
+}
+
+.admin-nav-dropdown > summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.admin-nav-dropdown.contains-active > summary {
+  color: #fff;
+  box-shadow: inset 0 -3px 0 var(--teal);
+}
+
+.admin-nav-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: 250px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid #403941;
+  border-radius: 7px;
+  padding: 7px;
+  background: #171519;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.46);
+}
+
+.admin-nav-menu-right {
+  right: 0;
+  left: auto;
+}
+
+.admin-nav-menu .admin-panel-card {
+  width: 100%;
+  justify-content: flex-start;
+  border-radius: 5px;
+  padding-inline: 12px;
+  text-align: left;
+}
+
+.admin-nav-menu .admin-panel-card.active {
+  color: #281a21;
+  background: var(--teal);
+  box-shadow: none;
+}
+
+.admin-page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #342f35;
+  padding: 30px 4px 22px;
+}
+
+.admin-page-heading > div {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-page-heading h2 {
+  font-size: 1.85rem;
+}
+
+.admin-page-heading .muted {
+  max-width: 720px;
+  line-height: 1.45;
+}
+
+.admin-page-loader {
+  min-height: 330px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  color: #f7eaf0;
+}
+
+.admin-loader-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid #403941;
+  border-top-color: var(--teal);
+  border-radius: 50%;
+  animation: adminLoaderSpin 0.72s linear infinite;
+}
+
+.admin-loader-line {
+  width: min(260px, 70vw);
+  height: 3px;
+  overflow: hidden;
+  background: #302b31;
+}
+
+.admin-loader-line::after {
+  content: "";
+  display: block;
+  width: 42%;
+  height: 100%;
+  background: var(--teal);
+  animation: adminLoaderLine 0.8s ease-in-out infinite alternate;
+}
+
+body[data-view="moderator"] .moderator-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 0 0 34px;
+}
+
+body[data-view="moderator"] .mod-section {
+  border: 1px solid #383238;
+  border-radius: 7px;
+  padding: 20px;
+  background: #18151a;
+}
+
+body[data-view="moderator"] .moderator-panel.admin-page-loading {
+  min-height: 0;
+  margin-top: 0;
+  padding: 0;
+}
+
+@keyframes adminLoaderSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes adminLoaderLine {
+  from { transform: translateX(-70%); }
+  to { transform: translateX(140%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-loader-spinner,
+  .admin-loader-line::after {
+    animation-duration: 1.6s;
+  }
+}
+
+@media (max-width: 900px) {
+  body[data-view="moderator"] .shell,
+  body[data-view="moderator"] .shell.admin-info-visible {
+    width: min(100% - 24px, 1440px);
+  }
+
+  .admin-site-nav {
+    position: sticky;
+    display: grid;
+    gap: 8px;
+    padding: 9px 0;
+  }
+
+  .admin-site-brand {
+    padding-inline: 4px;
+  }
+
+  .admin-site-links {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .admin-site-nav .admin-panel-card,
+  .admin-nav-dropdown > summary {
+    width: 100%;
+    padding-inline: 8px;
+    font-size: 0.76rem;
+  }
+
+  .admin-nav-menu {
+    width: min(250px, calc(100vw - 32px));
+  }
+
+  .admin-page-heading {
+    padding-top: 22px;
+  }
+}
+
+@media (max-width: 600px) {
+  body[data-view="moderator"] .topbar {
+    padding-top: 10px;
+  }
+
+  .admin-site-links {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-site-nav .admin-panel-card,
+  .admin-nav-dropdown > summary {
+    min-height: 38px;
+    border-radius: 4px;
+  }
+
+  .admin-nav-dropdown:nth-of-type(even) .admin-nav-menu {
+    right: 0;
+    left: auto;
+  }
+
+  .admin-page-heading {
+    align-items: flex-start;
+    padding: 20px 2px 17px;
+  }
+
+  .admin-page-heading h2 {
+    font-size: 1.5rem;
+  }
+
+  body[data-view="moderator"] .mod-section {
+    padding: 15px;
+  }
+}

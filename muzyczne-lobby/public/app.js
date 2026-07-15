@@ -16,6 +16,22 @@ const DIFFICULTY_LABELS = {
   hard: "Hard",
   impossible: "Impossible"
 };
+const ADMIN_PAGE_META = {
+  center: { title: "Centrum", description: "Sterowanie gra i najwazniejsze informacje." },
+  rooms: { title: "Gry", description: "Aktywne pokoje, gracze i zarzadzanie lobby." },
+  tracks: { title: "Openingi", description: "Glowna lista utworow wykorzystywanych w grze." },
+  playlist: { title: "Import playlisty", description: "Dodawanie wielu openingow z playlisty YouTube." },
+  search: { title: "Wyszukiwarka YouTube", description: "Wyszukiwanie i dodawanie pojedynczych openingow." },
+  library: { title: "Biblioteka", description: "Pelna baza openingow, filtrowanie i edycja danych." },
+  blocked: { title: "Zablokowane osoby", description: "Lista blokad graczy i zarzadzanie dostepem." },
+  scoring: { title: "Punktacja", description: "Punkty przyznawane dla kazdego poziomu trudnosci." },
+  stats: { title: "% zgadniec", description: "Skutecznosc odpowiedzi i porownanie trudnosci openingow." },
+  soloPlayers: { title: "Ranking solo", description: "Wyniki osob grajacych w trybie solo." },
+  quality: { title: "Jakosc openingow", description: "Problemy z odtwarzaniem i stan plikow audio." },
+  backup: { title: "Backup", description: "Eksport i przywracanie zapisanych danych." },
+  reports: { title: "Zgloszenia", description: "Bledy przeslane przez graczy podczas gry solo." },
+  history: { title: "Historia zmian", description: "Zapisane i nieudane edycje wykonane przez administratorow." }
+};
 
 const loginView = $("#loginView");
 const appView = $("#appView");
@@ -169,6 +185,13 @@ const audio = $("#songAudio");
 const adminPanelTabs = $("#adminPanelTabs");
 const adminPanelButtons = Array.from(document.querySelectorAll("[data-admin-panel-target]"));
 const adminPanelSections = Array.from(document.querySelectorAll("[data-admin-panel]"));
+const adminNavDropdowns = Array.from(document.querySelectorAll(".admin-nav-dropdown"));
+const adminNavCurrent = $("#adminNavCurrent");
+const adminPageHeading = $("#adminPageHeading");
+const adminPageTitle = $("#adminPageTitle");
+const adminPageDescription = $("#adminPageDescription");
+const adminPageLoader = $("#adminPageLoader");
+const adminLoaderLabel = $("#adminLoaderLabel");
 const adminSoloStatsList = $("#adminSoloStatsList");
 const adminSoloStatsCount = $("#adminSoloStatsCount");
 const adminRoomList = $("#adminRoomList");
@@ -228,6 +251,8 @@ let pendingAdminRepeatTimer = null;
 let lastAdminAuditRenderKey = "";
 let lastRenderedTracks = null;
 let lastRenderedCurrentTrackId = "";
+let adminPageLoading = false;
+let adminPageTransitionTimer = null;
 let trackPreviewAudio = null;
 let lastAudioErrorAt = 0;
 let youtubeApiRequested = false;
@@ -654,6 +679,9 @@ function showAppForProfile() {
   appView.classList.remove("hidden");
   setDocumentView(profileViewName(profile));
   moderatorPanel.classList.toggle("hidden", profile.role !== "moderator");
+  if (adminPanelTabs) adminPanelTabs.classList.toggle("hidden", profile.role !== "moderator");
+  if (adminPageHeading) adminPageHeading.classList.toggle("hidden", profile.role !== "moderator");
+  if (profile.role === "moderator") renderAdminPanelTabs();
   roleLabel.textContent = profile.role === "moderator" ? "♛ administrator" : profile.nickname + (profile.playMode === "solo" ? "" : " / " + profile.team);
   if (profile.role === "solo") roleLabel.textContent = "granie solo";
   roomCodeLabel.textContent = profile.role === "solo" ? "SOLO" : profile.roomCode;
@@ -913,6 +941,9 @@ function join(role) {
   appView.classList.remove("hidden");
   setDocumentView(profileViewName(profile));
   moderatorPanel.classList.toggle("hidden", role !== "moderator");
+  if (adminPanelTabs) adminPanelTabs.classList.toggle("hidden", role !== "moderator");
+  if (adminPageHeading) adminPageHeading.classList.toggle("hidden", role !== "moderator");
+  if (role === "moderator") renderAdminPanelTabs();
   roleLabel.textContent = role === "moderator" ? "♛ administrator" : nickname + (playMode === "solo" ? "" : " / " + team);
   if (role === "solo") roleLabel.textContent = "granie solo";
   roomCodeLabel.textContent = roomCode;
@@ -937,6 +968,12 @@ function returnToLogin(message) {
   loginView.classList.remove("hidden");
   setDocumentView("login");
   moderatorPanel.classList.add("hidden");
+  if (adminPanelTabs) adminPanelTabs.classList.add("hidden");
+  if (adminPageHeading) adminPageHeading.classList.add("hidden");
+  if (adminPageLoader) adminPageLoader.classList.add("hidden");
+  if (mainGrid) mainGrid.classList.remove("hidden");
+  clearTimeout(adminPageTransitionTimer);
+  adminPageLoading = false;
   copyLinkButton.classList.remove("hidden");
   resetTrackForm();
   if (message) showToast(message);
@@ -1149,6 +1186,7 @@ if (adminPanelTabs) {
   adminPanelTabs.addEventListener("click", function (event) {
     const button = event.target.closest("[data-admin-panel-target]");
     if (!button) return;
+    adminNavDropdowns.forEach(function (dropdown) { dropdown.open = false; });
     setActiveAdminPanel(button.dataset.adminPanelTarget || "center", true);
   });
 }
@@ -3301,19 +3339,47 @@ function adminPanelFromHash() {
 }
 
 function setActiveAdminPanel(panel, updateRoute) {
-  activeAdminPanel = panel || "center";
+  const nextPanel = ADMIN_PAGE_META[panel] ? panel : "center";
+  if (nextPanel === activeAdminPanel && !adminPageLoading) {
+    renderAdminPanelTabs();
+    return;
+  }
+
+  clearTimeout(adminPageTransitionTimer);
+  activeAdminPanel = nextPanel;
+  adminPageLoading = true;
   if (updateRoute && profile && profile.role === "moderator") {
     const url = new URL(location.href);
     url.hash = "admin/" + activeAdminPanel;
     history.replaceState(null, "", url);
   }
+  if (profile && profile.role === "moderator") mod("refresh", { panel: activeAdminPanel });
+  if (adminLoaderLabel) adminLoaderLabel.textContent = "Ladowanie: " + ADMIN_PAGE_META[activeAdminPanel].title;
   renderAdminPanelTabs();
+  if (adminPanelTabs && adminPanelTabs.scrollIntoView) {
+    adminPanelTabs.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  adminPageTransitionTimer = setTimeout(function () {
+    adminPageLoading = false;
+    renderAdminPanelTabs();
+  }, 360);
 }
 
 function renderAdminPanelTabs() {
   if (!adminPanelButtons.length || !adminPanelSections.length) return;
   const available = adminPanelButtons.some((button) => button.dataset.adminPanelTarget === activeAdminPanel);
   if (!available) activeAdminPanel = "center";
+  const pageMeta = ADMIN_PAGE_META[activeAdminPanel] || ADMIN_PAGE_META.center;
+
+  if (adminNavCurrent) adminNavCurrent.textContent = pageMeta.title;
+  if (adminPageTitle) adminPageTitle.textContent = pageMeta.title;
+  if (adminPageDescription) adminPageDescription.textContent = pageMeta.description;
+  if (adminPageHeading) adminPageHeading.classList.toggle("hidden", !profile || profile.role !== "moderator");
+  if (adminPageLoader) adminPageLoader.classList.toggle("hidden", !adminPageLoading);
+  if (mainGrid && profile && profile.role === "moderator") {
+    mainGrid.classList.toggle("hidden", adminPageLoading || activeAdminPanel !== "center");
+  }
+  if (moderatorPanel) moderatorPanel.classList.toggle("admin-page-loading", adminPageLoading);
 
   adminPanelButtons.forEach(function (button) {
     const active = button.dataset.adminPanelTarget === activeAdminPanel;
@@ -3321,8 +3387,12 @@ function renderAdminPanelTabs() {
     button.setAttribute("aria-pressed", active ? "true" : "false");
   });
 
+  adminNavDropdowns.forEach(function (dropdown) {
+    dropdown.classList.toggle("contains-active", Boolean(dropdown.querySelector(".admin-panel-card.active")));
+  });
+
   adminPanelSections.forEach(function (section) {
-    section.classList.toggle("hidden", section.dataset.adminPanel !== activeAdminPanel);
+    section.classList.toggle("hidden", adminPageLoading || section.dataset.adminPanel !== activeAdminPanel);
   });
 }
 

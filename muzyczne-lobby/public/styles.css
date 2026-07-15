@@ -856,6 +856,7 @@ h2 {
 .library-list,
 .library-difficulty-list,
 .admin-report-list,
+.admin-audit-list,
 .admin-solo-stats-list,
 .admin-solo-players-list,
 .quality-list,
@@ -1742,8 +1743,97 @@ h2 {
 .solo-players-section,
 .quality-section,
 .backup-section,
-.reports-section {
+.reports-section,
+.history-section {
   grid-column: 1 / -1;
+}
+
+.admin-history-lead {
+  margin: -4px 0 14px;
+}
+
+.admin-audit-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-audit-row {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.admin-audit-row.audit-success {
+  border-color: rgba(117, 221, 165, 0.34);
+}
+
+.admin-audit-row.audit-failed {
+  border-color: rgba(255, 114, 170, 0.44);
+}
+
+.admin-audit-head,
+.admin-audit-footer,
+.admin-audit-track {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-audit-status {
+  flex: 0 0 auto;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 0.76rem;
+  font-weight: 950;
+}
+
+.admin-audit-status.success {
+  color: #8be6b5;
+  background: rgba(117, 221, 165, 0.09);
+}
+
+.admin-audit-status.failed {
+  color: #ff9dc4;
+  background: rgba(255, 114, 170, 0.1);
+}
+
+.admin-audit-track {
+  justify-content: flex-start;
+  min-width: 0;
+  border-block: 1px solid rgba(242, 167, 199, 0.12);
+  padding-block: 10px;
+}
+
+.admin-audit-track span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 850;
+}
+
+.admin-audit-track strong {
+  color: var(--teal);
+}
+
+.admin-audit-changes {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: #fff8fb;
+  font-size: 0.86rem;
+}
+
+.admin-audit-footer .muted {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-audit-footer button {
+  flex: 0 0 auto;
 }
 
 .decision-text {
@@ -2409,6 +2499,17 @@ h2 {
 
   .admin-report-actions {
     justify-content: flex-start;
+  }
+
+  .admin-audit-head,
+  .admin-audit-footer,
+  .admin-audit-track {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-audit-footer button {
+    width: 100%;
   }
 
   .track-actions select,

@@ -689,7 +689,126 @@ function roomClients(room) {
 }
 
 function isMetaConfigKey(code) {
-  return code === "__soloStats" || code === "__soloReports" || code === "__soloPlayers" || code === "__dailySolo" || code === "__soloDayChampion";
+  return code === "__soloStats" || code === "__soloReports" || code === "__soloPlayers" || code === "__dailySolo" || code === "__soloDayChampion" || code === "__adminAudit";
+}
+
+function adminAuditStore() {
+  if (!Array.isArray(persistedRoomConfigs.__adminAudit)) {
+    persistedRoomConfigs.__adminAudit = [];
+  }
+  return persistedRoomConfigs.__adminAudit;
+}
+
+function auditTrackSnapshot(track) {
+  const source = track && typeof track === "object" ? track : {};
+  return {
+    id: rawText(source.id, 80),
+    anime: rawText(source.anime, 220),
+    englishTitle: rawText(source.englishTitle, 160),
+    romajiTitle: rawText(source.romajiTitle, 160),
+    opening: rawText(source.opening, 120),
+    difficulty: difficultyExists(source.difficulty) ? source.difficulty : "medium",
+    audioUrl: rawText(source.audioUrl, 700),
+    fallbackAudioUrl: rawText(source.fallbackAudioUrl, 700),
+    startAtFirst: numericTrackTime(source.startAtFirst, 0),
+    startAtSecond: numericTrackTime(source.startAtSecond, 5),
+    coverUrl: rawText(source.coverUrl, 700),
+    description: rawText(source.description, 420),
+    aliases: cleanAliases(source.aliases)
+  };
+}
+
+function auditEditPayload(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  return {
+    trackId: rawText(source.trackId, 80),
+    trackKey: rawText(source.trackKey || source.key, 140),
+    track: auditTrackSnapshot(source.track)
+  };
+}
+
+function findTrackForAdminEdit(room, action, payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const trackId = rawText(source.trackId, 80);
+  if (action === "updateTrack") {
+    return (room && room.tracks || []).find(function (track) { return rawText(track && track.id, 80) === trackId; }) || null;
+  }
+  if (action === "updateLibraryTrack") {
+    return (room && room.libraryTracks || []).find(function (track) { return rawText(track && track.id, 80) === trackId; }) || null;
+  }
+
+  const statKey = rawText(source.trackKey || source.key, 140);
+  let found = null;
+  function inspect(list) {
+    if (found) return;
+    found = (list || []).find(function (track) {
+      if (!track) return false;
+      return (trackId && rawText(track.id, 80) === trackId) || (statKey && soloTrackKey(track) === statKey);
+    }) || null;
+  }
+  rooms.forEach(function (candidate) {
+    inspect(candidate.tracks);
+    inspect(candidate.libraryTracks);
+  });
+  if (!found) {
+    Object.keys(persistedRoomConfigs).forEach(function (code) {
+      if (found || isMetaConfigKey(code)) return;
+      const config = persistedRoomConfigs[code];
+      if (!config || typeof config !== "object") return;
+      inspect(config.tracks);
+      inspect(config.libraryTracks);
+    });
+  }
+  return found;
+}
+
+function adminEditLabel(action) {
+  if (action === "updateLibraryTrack") return "Edycja biblioteki";
+  if (action === "updateReportedTrack") return "Edycja zgloszonego openingu";
+  return "Edycja openingu";
+}
+
+function recordAdminEdit(socket, room, action, status, message, before, after, payload, repeatedFrom) {
+  const store = adminAuditStore();
+  const entry = {
+    id: id("audit_"),
+    at: now(),
+    moderator: cleanText(socket && socket.nickname, "Administrator", 60),
+    roomCode: cleanText(room && room.code, "LOBBY", 24),
+    action: action,
+    actionLabel: adminEditLabel(action),
+    status: status === "success" ? "success" : "failed",
+    message: rawText(message, 220),
+    before: before ? auditTrackSnapshot(before) : null,
+    after: after ? auditTrackSnapshot(after) : null,
+    payload: auditEditPayload(payload),
+    repeatable: ["updateTrack", "updateLibraryTrack", "updateReportedTrack"].includes(action),
+    repeatedFrom: rawText(repeatedFrom, 80)
+  };
+  store.push(entry);
+  if (store.length > 300) store.splice(0, store.length - 300);
+  const persistenceError = savePersistedRooms();
+  broadcastModeratorStats();
+  return { entry: entry, persistenceError: persistenceError };
+}
+
+function publicAdminAudit() {
+  return adminAuditStore().slice(-250).reverse().map(function (entry) {
+    return {
+      id: rawText(entry.id, 80),
+      at: numberInRange(entry.at, 0, 0, 9999999999),
+      moderator: cleanText(entry.moderator, "Administrator", 60),
+      roomCode: cleanText(entry.roomCode, "LOBBY", 24),
+      action: rawText(entry.action, 80),
+      actionLabel: rawText(entry.actionLabel, 100),
+      status: entry.status === "success" ? "success" : "failed",
+      message: rawText(entry.message, 220),
+      before: entry.before ? auditTrackSnapshot(entry.before) : null,
+      after: entry.after ? auditTrackSnapshot(entry.after) : null,
+      repeatable: Boolean(entry.repeatable && entry.payload),
+      repeatedFrom: rawText(entry.repeatedFrom, 80)
+    };
+  });
 }
 
 function soloStatsStore() {
@@ -2600,6 +2719,7 @@ function publicRoom(room, socket) {
   addChangedStateField(roomState, socket, scope, "soloReports", isModerator ? publicSoloReports() : []);
   addChangedStateField(roomState, socket, scope, "soloLeaderboard", isModerator ? publicSoloLeaderboard() : []);
   addChangedStateField(roomState, socket, scope, "dailySoloLeaderboard", isModerator ? publicDailySoloLeaderboard(dayKey(now())) : []);
+  addChangedStateField(roomState, socket, scope, "adminAuditLog", isModerator ? publicAdminAudit() : []);
   addChangedStateField(roomState, socket, scope, "persistence", isModerator ? publicPersistenceInfo() : null);
   addChangedStateField(roomState, socket, scope, "adminRooms", isModerator ? publicAdminRooms(room.code) : []);
 
@@ -3743,10 +3863,73 @@ function removeRoom(socket, payload) {
   return "";
 }
 
+function repeatAdminEdit(socket, currentRoom, payload) {
+  const auditId = rawText(payload && payload.auditId, 80);
+  const original = adminAuditStore().find(function (entry) {
+    return rawText(entry && entry.id, 80) === auditId;
+  });
+  if (!original || !original.repeatable || !original.payload) {
+    return { error: "Nie znaleziono zmian, ktore mozna powtorzyc." };
+  }
+
+  const action = rawText(original.action, 80);
+  if (!["updateTrack", "updateLibraryTrack", "updateReportedTrack"].includes(action)) {
+    return { error: "Tej operacji nie mozna bezpiecznie powtorzyc." };
+  }
+
+  const editPayload = auditEditPayload(original.payload);
+  const targetRoom = action === "updateReportedTrack"
+    ? currentRoom
+    : getRoom(roomCode(original.roomCode || currentRoom.code));
+  const before = findTrackForAdminEdit(targetRoom, action, editPayload);
+  let error = "";
+
+  if (action === "updateTrack") error = updateTrack(targetRoom, editPayload) || "";
+  if (action === "updateLibraryTrack") error = updateLibraryTrack(targetRoom, editPayload) || "";
+  if (action === "updateReportedTrack") error = updateReportedTrack(editPayload) || "";
+
+  if (!error && action !== "updateReportedTrack") {
+    touch(targetRoom);
+    error = saveRoomConfig(targetRoom) || "";
+    broadcast(targetRoom);
+  }
+
+  const after = findTrackForAdminEdit(targetRoom, action, editPayload);
+  if (error) {
+    recordAdminEdit(socket, targetRoom, action, "failed", error, before, after, editPayload, original.id);
+    return { error: error };
+  }
+
+  const auditResult = recordAdminEdit(
+    socket,
+    targetRoom,
+    action,
+    "success",
+    "Powtorzono zapisane zmiany.",
+    before,
+    after,
+    editPayload,
+    original.id
+  );
+  if (auditResult.persistenceError) {
+    return { error: "Zmiana zostala wykonana, ale nie udalo sie zapisac historii: " + auditResult.persistenceError };
+  }
+  return { error: "", message: "Powtorzono i zapisano zmiany." };
+}
+
 async function handleModerator(socket, payload) {
   if (!socket.roomCode || !requireModerator(socket)) return;
   const room = getRoom(socket.roomCode);
   const action = payload.action;
+  const auditedEdit = ["updateTrack", "updateLibraryTrack", "updateReportedTrack"].includes(action);
+  const editBefore = auditedEdit ? findTrackForAdminEdit(room, action, payload || {}) : null;
+
+  if (action === "repeatAdminChange") {
+    const repeated = repeatAdminEdit(socket, room, payload || {});
+    if (repeated.error) return sendError(socket, repeated.error, payload.requestId);
+    sendModeratorActionResult(socket, payload, repeated.message);
+    return;
+  }
 
   if (action === "removeRoom") {
     const error = removeRoom(socket, payload || {});
@@ -3783,7 +3966,10 @@ async function handleModerator(socket, payload) {
 
   if (action === "updateLibraryTrack") {
     const error = updateLibraryTrack(room, payload || {});
-    if (error) return sendError(socket, error, payload.requestId);
+    if (error) {
+      recordAdminEdit(socket, room, action, "failed", error, editBefore, findTrackForAdminEdit(room, action, payload || {}), payload || {});
+      return sendError(socket, error, payload.requestId);
+    }
   }
 
   if (action === "updateLibraryDifficulty") {
@@ -3817,8 +4003,13 @@ async function handleModerator(socket, payload) {
 
   if (action === "updateReportedTrack") {
     const error = updateReportedTrack(payload || {});
-    if (error) return sendError(socket, error, payload.requestId);
-    sendModeratorActionResult(socket, payload, "Zapisano zgloszony opening.");
+    if (error) {
+      recordAdminEdit(socket, room, action, "failed", error, editBefore, findTrackForAdminEdit(room, action, payload || {}), payload || {});
+      return sendError(socket, error, payload.requestId);
+    }
+    const auditResult = recordAdminEdit(socket, room, action, "success", "Zapisano zgloszony opening.", editBefore, findTrackForAdminEdit(room, action, payload || {}), payload || {});
+    if (auditResult.persistenceError) return sendError(socket, auditResult.persistenceError, payload.requestId);
+    sendModeratorActionResult(socket, payload, "Zapisano zgloszony opening i historie zmian.");
     return;
   }
 
@@ -3833,7 +4024,10 @@ async function handleModerator(socket, payload) {
 
   if (action === "updateTrack") {
     const error = updateTrack(room, payload || {});
-    if (error) return sendError(socket, error, payload.requestId);
+    if (error) {
+      recordAdminEdit(socket, room, action, "failed", error, editBefore, findTrackForAdminEdit(room, action, payload || {}), payload || {});
+      return sendError(socket, error, payload.requestId);
+    }
   }
 
   if (action === "removeTrack") {
@@ -4018,12 +4212,20 @@ async function handleModerator(socket, payload) {
 
   touch(room);
   broadcast(room);
+  if (persistenceError && auditedEdit) {
+    recordAdminEdit(socket, room, action, "failed", persistenceError, editBefore, findTrackForAdminEdit(room, action, payload || {}), payload || {});
+  }
   if (persistenceError && payload.requestId) return sendError(socket, persistenceError, payload.requestId);
+  if (auditedEdit) {
+    const successMessage = action === "updateLibraryTrack" ? "Zapisano opening w bibliotece." : "Zapisano opening.";
+    const auditResult = recordAdminEdit(socket, room, action, "success", successMessage, editBefore, findTrackForAdminEdit(room, action, payload || {}), payload || {});
+    if (auditResult.persistenceError && payload.requestId) return sendError(socket, auditResult.persistenceError, payload.requestId);
+  }
   if (action === "updateLibraryTrack") {
-    sendModeratorActionResult(socket, payload, "Zapisano opening w bibliotece.");
+    sendModeratorActionResult(socket, payload, "Zapisano opening w bibliotece i historie zmian.");
   }
   if (action === "updateTrack") {
-    sendModeratorActionResult(socket, payload, "Zapisano opening.");
+    sendModeratorActionResult(socket, payload, "Zapisano opening i historie zmian.");
   }
 }
 

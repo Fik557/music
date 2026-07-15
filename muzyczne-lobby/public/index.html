@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#17121b" />
     <title>Anime Opening Quiz</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=10" />
+    <link rel="stylesheet" href="/styles.css?v=11" />
   </head>
   <body>
     <main class="shell">
@@ -27,7 +27,7 @@
           </div>
 
           <label id="nicknameField">
-            Nick
+            <span id="nicknameLabel">Nick</span>
             <input id="nicknameInput" name="nickname" autocomplete="nickname" maxlength="40" required />
           </label>
           <label id="roomField">
@@ -508,6 +508,6 @@
     <audio id="songAudio" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></audio>
     <div class="youtube-stage" id="youtubePlayer" aria-hidden="true"></div>
     <div class="toast hidden" id="toast"></div>
-    <script src="/app.js?v=10"></script>
+    <script src="/app.js?v=11"></script>
   </body>
 </html>

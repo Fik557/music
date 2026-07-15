@@ -119,6 +119,7 @@ const trackDescriptionInput = $("#trackDescriptionInput");
 const trackAliasesInput = $("#trackAliasesInput");
 const trackSubmitButton = $("#trackSubmitButton");
 const cancelEditButton = $("#cancelEditButton");
+const retryTrackSaveButton = $("#retryTrackSaveButton");
 const trackEditPreview = $("#trackEditPreview");
 const trackPreviewStatus = $("#trackPreviewStatus");
 const trackPreviewFirstButton = $("#trackPreviewFirstButton");
@@ -176,6 +177,8 @@ const adminReportList = $("#adminReportList");
 const adminReportsCount = $("#adminReportsCount");
 const adminReportSearchInput = $("#adminReportSearchInput");
 const adminReportSortInput = $("#adminReportSortInput");
+const adminAuditList = $("#adminAuditList");
+const adminAuditCount = $("#adminAuditCount");
 const adminCenterPhase = $("#adminCenterPhase");
 const adminCenterGrid = $("#adminCenterGrid");
 const adminSoloPlayersList = $("#adminSoloPlayersList");
@@ -219,6 +222,12 @@ let editingTrackId = null;
 let editingTrackSource = "tracks";
 let pendingTrackSave = null;
 let pendingTrackSaveTimer = null;
+let lastFailedTrackSave = null;
+let pendingAdminRepeat = null;
+let pendingAdminRepeatTimer = null;
+let lastAdminAuditRenderKey = "";
+let lastRenderedTracks = null;
+let lastRenderedCurrentTrackId = "";
 let trackPreviewAudio = null;
 let lastAudioErrorAt = 0;
 let youtubeApiRequested = false;
@@ -241,7 +250,7 @@ let avatarData = "";
 let avatarCropSource = null;
 let buzzerAudioContext = null;
 let lastBuzzerSoundKey = "";
-let activeAdminPanel = "center";
+let activeAdminPanel = adminPanelFromHash() || "center";
 let lastSoloAnswerTrackId = "";
 let lastSoloReportTrackId = "";
 let adminStatsSort = "desc";
@@ -712,6 +721,10 @@ function connect() {
         finishTrackSave(false, payload.message);
         return;
       }
+      if (payload.requestId && pendingAdminRepeat && payload.requestId === pendingAdminRepeat.requestId) {
+        finishAdminRepeat(false, payload.message);
+        return;
+      }
       if (playlistImportButton) playlistImportButton.disabled = false;
       if (youtubeSearchButton) youtubeSearchButton.disabled = false;
       if (audioUploadButton) audioUploadButton.disabled = false;
@@ -724,6 +737,10 @@ function connect() {
     if (payload.type === "moderatorActionResult") {
       if (pendingTrackSave && payload.requestId === pendingTrackSave.requestId) {
         finishTrackSave(true, payload.message);
+        return;
+      }
+      if (pendingAdminRepeat && payload.requestId === pendingAdminRepeat.requestId) {
+        finishAdminRepeat(true, payload.message);
       }
     }
     if (payload.type === "joinRejected") returnToLogin(payload.message);
@@ -777,6 +794,7 @@ function connect() {
   socket.addEventListener("close", function () {
     connectionStatus.textContent = "offline";
     if (pendingTrackSave) finishTrackSave(false, "Polaczenie zostalo przerwane. Dane pozostaly w formularzu.");
+    if (pendingAdminRepeat) finishAdminRepeat(false, "Polaczenie zostalo przerwane. Sprobuj ponownie.");
     clearTimeout(reconnectTimer);
     if (profile) reconnectTimer = setTimeout(connect, 1000);
   });
@@ -790,6 +808,7 @@ function mergeStatePayload(nextState, messageType) {
   const merged = Object.assign({}, previous, next);
 
   [
+    "adminAuditLog",
     "adminRooms",
     "blockedIps",
     "groups",
@@ -1130,10 +1149,14 @@ if (adminPanelTabs) {
   adminPanelTabs.addEventListener("click", function (event) {
     const button = event.target.closest("[data-admin-panel-target]");
     if (!button) return;
-    activeAdminPanel = button.dataset.adminPanelTarget || "center";
-    renderAdminPanelTabs();
+    setActiveAdminPanel(button.dataset.adminPanelTarget || "center", true);
   });
 }
+
+window.addEventListener("hashchange", function () {
+  const panel = adminPanelFromHash();
+  if (panel) setActiveAdminPanel(panel, false);
+});
 
 if (statsSortDescButton) {
   statsSortDescButton.addEventListener("click", function () {
@@ -1288,17 +1311,27 @@ function trackSubmitLabel() {
 }
 
 function finishTrackSave(success, message) {
+  const finishedAttempt = pendingTrackSave;
   clearTimeout(pendingTrackSaveTimer);
   pendingTrackSaveTimer = null;
   pendingTrackSave = null;
   trackSubmitButton.disabled = false;
   cancelEditButton.disabled = false;
   if (success) {
+    lastFailedTrackSave = null;
+    if (retryTrackSaveButton) retryTrackSaveButton.classList.add("hidden");
     if (trackSaveStatus) trackSaveStatus.textContent = message || "Zmiany zapisane.";
     showToast(message || "Zmiany zapisane.");
     resetTrackForm();
     return;
   }
+  if (finishedAttempt && finishedAttempt.action && finishedAttempt.data) {
+    lastFailedTrackSave = {
+      action: finishedAttempt.action,
+      data: JSON.parse(JSON.stringify(finishedAttempt.data))
+    };
+  }
+  if (retryTrackSaveButton && lastFailedTrackSave) retryTrackSaveButton.classList.remove("hidden");
   trackSubmitButton.textContent = trackSubmitLabel();
   if (trackSaveStatus) trackSaveStatus.textContent = message || "Nie udalo sie zapisac. Dane pozostaly w formularzu.";
   showToast(message || "Nie udalo sie zapisac. Dane pozostaly w formularzu.");
@@ -1306,17 +1339,26 @@ function finishTrackSave(success, message) {
 
 function beginTrackSave(action, data) {
   const requestId = "track_save_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
-  pendingTrackSave = { requestId: requestId, action: action };
+  const savedData = JSON.parse(JSON.stringify(data || {}));
+  pendingTrackSave = { requestId: requestId, action: action, data: savedData };
   trackSubmitButton.disabled = true;
   cancelEditButton.disabled = true;
+  if (retryTrackSaveButton) retryTrackSaveButton.classList.add("hidden");
   trackSubmitButton.textContent = "Zapisywanie...";
   if (trackSaveStatus) trackSaveStatus.textContent = "Zapisywanie zmian...";
-  mod(action, Object.assign({ requestId: requestId }, data || {}));
+  mod(action, Object.assign({ requestId: requestId }, savedData));
   clearTimeout(pendingTrackSaveTimer);
   pendingTrackSaveTimer = setTimeout(function () {
     if (!pendingTrackSave || pendingTrackSave.requestId !== requestId) return;
     finishTrackSave(false, "Serwer nie potwierdzil zapisu. Sprobuj ponownie.");
   }, 12000);
+}
+
+if (retryTrackSaveButton) {
+  retryTrackSaveButton.addEventListener("click", function () {
+    if (pendingTrackSave || !lastFailedTrackSave) return;
+    beginTrackSave(lastFailedTrackSave.action, lastFailedTrackSave.data);
+  });
 }
 
 trackForm.addEventListener("submit", function (event) {
@@ -2561,8 +2603,7 @@ function renderAdminCenter() {
   const openQuality = node("button", "", "Otworz jakosc");
   openQuality.type = "button";
   openQuality.addEventListener("click", function () {
-    activeAdminPanel = "quality";
-    renderAdminPanelTabs();
+    setActiveAdminPanel("quality", true);
   });
   qualityActions.append(openQuality);
   qualityCard.append(qualityMeta, qualityActions);
@@ -2578,8 +2619,7 @@ function renderAdminCenter() {
   const openBackup = node("button", "", "Backup");
   openBackup.type = "button";
   openBackup.addEventListener("click", function () {
-    activeAdminPanel = "backup";
-    renderAdminPanelTabs();
+    setActiveAdminPanel("backup", true);
   });
   dataActions.append(openBackup);
   dataCard.append(dataMeta, dataActions);
@@ -2910,7 +2950,115 @@ function renderAdminReports() {
   });
 }
 
+function auditTrackName(track) {
+  if (!track) return "Nie znaleziono openingu";
+  return [track.anime, track.opening].filter(Boolean).join(" / ") || "Anime bez nazwy";
+}
+
+function adminAuditChanges(entry) {
+  const before = entry.before || {};
+  const after = entry.after || {};
+  const changes = [];
+  function add(label, oldValue, newValue, compact) {
+    const oldText = Array.isArray(oldValue) ? oldValue.join(", ") : String(oldValue == null ? "" : oldValue);
+    const newText = Array.isArray(newValue) ? newValue.join(", ") : String(newValue == null ? "" : newValue);
+    if (oldText === newText) return;
+    if (compact) {
+      changes.push(label + " zmieniono");
+      return;
+    }
+    changes.push(label + ": " + (oldText || "brak") + " -> " + (newText || "brak"));
+  }
+  add("Anime", before.anime, after.anime);
+  add("Opening", before.opening, after.opening);
+  add("Poziom", DIFFICULTY_LABELS[before.difficulty] || before.difficulty, DIFFICULTY_LABELS[after.difficulty] || after.difficulty);
+  add("Link audio", before.audioUrl, after.audioUrl, true);
+  add("Awaryjne audio", before.fallbackAudioUrl, after.fallbackAudioUrl, true);
+  add("Fragment 1", before.startAtFirst, after.startAtFirst);
+  add("Fragment 2", before.startAtSecond, after.startAtSecond);
+  add("Okladka", before.coverUrl, after.coverUrl, true);
+  add("Opis", before.description, after.description, true);
+  add("Aliasy", before.aliases, after.aliases, true);
+  return changes.length ? changes : [entry.status === "failed" ? "Zmiana nie zostala zastosowana." : "Powtorzono te same dane."];
+}
+
+function finishAdminRepeat(success, message) {
+  clearTimeout(pendingAdminRepeatTimer);
+  pendingAdminRepeatTimer = null;
+  pendingAdminRepeat = null;
+  renderAdminAudit();
+  showToast(message || (success ? "Powtorzono zmiany." : "Nie udalo sie powtorzyc zmian."));
+}
+
+function beginAdminRepeat(entry) {
+  if (!entry || !entry.id || pendingAdminRepeat) return;
+  const requestId = "audit_repeat_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+  pendingAdminRepeat = { requestId: requestId, auditId: entry.id };
+  renderAdminAudit();
+  mod("repeatAdminChange", { auditId: entry.id, requestId: requestId });
+  clearTimeout(pendingAdminRepeatTimer);
+  pendingAdminRepeatTimer = setTimeout(function () {
+    if (!pendingAdminRepeat || pendingAdminRepeat.requestId !== requestId) return;
+    finishAdminRepeat(false, "Serwer nie potwierdzil ponowienia zmian.");
+  }, 12000);
+}
+
+function renderAdminAudit() {
+  if (!adminAuditList || !adminAuditCount || !profile || profile.role !== "moderator") return;
+  const entries = Array.isArray(state.adminAuditLog) ? state.adminAuditLog : [];
+  const renderKey = entries.map(function (entry) {
+    return [entry.id, entry.status, entry.message, entry.repeatedFrom].join(":");
+  }).join("|") + "|pending:" + (pendingAdminRepeat ? pendingAdminRepeat.auditId : "");
+  if (renderKey === lastAdminAuditRenderKey) return;
+  lastAdminAuditRenderKey = renderKey;
+  adminAuditList.replaceChildren();
+  adminAuditCount.textContent = entries.length + (entries.length === 1 ? " wpis" : " wpisow");
+
+  if (!entries.length) {
+    adminAuditList.append(node("p", "muted empty-row", "Historia jest pusta. Pierwsza edycja openingu pojawi sie tutaj."));
+    return;
+  }
+
+  entries.forEach(function (entry) {
+    const success = entry.status === "success";
+    const row = node("article", "admin-audit-row tournament-card " + (success ? "audit-success" : "audit-failed"));
+    const header = node("div", "admin-audit-head");
+    const title = node("div", "track-meta");
+    title.append(
+      node("b", "", (entry.repeatedFrom ? "Powtorzenie: " : "") + (entry.actionLabel || "Edycja openingu")),
+      node("span", "", [entry.moderator || "Administrator", "Pokoj " + (entry.roomCode || "LOBBY"), formatReportDate(entry.at)].filter(Boolean).join(" / "))
+    );
+    const status = node("span", "admin-audit-status " + (success ? "success" : "failed"), success ? "Zapisano" : "Blad");
+    header.append(title, status);
+
+    const names = node("div", "admin-audit-track");
+    names.append(
+      node("span", "", auditTrackName(entry.before)),
+      node("strong", "", "->"),
+      node("span", "", auditTrackName(entry.after))
+    );
+    const changeList = node("ul", "admin-audit-changes");
+    adminAuditChanges(entry).forEach(function (change) {
+      changeList.append(node("li", "", change));
+    });
+    const footer = node("div", "admin-audit-footer");
+    footer.append(node("span", "muted", entry.message || (success ? "Zmiany zapisane." : "Zapis nieudany.")));
+    if (entry.repeatable) {
+      const repeat = node("button", success ? "" : "primary", pendingAdminRepeat && pendingAdminRepeat.auditId === entry.id ? "Powtarzanie..." : "Powtorz zmiany");
+      repeat.type = "button";
+      repeat.disabled = Boolean(pendingAdminRepeat);
+      repeat.addEventListener("click", function () { beginAdminRepeat(entry); });
+      footer.append(repeat);
+    }
+    row.append(header, names, changeList, footer);
+    adminAuditList.append(row);
+  });
+}
+
 function renderTracks() {
+  if (lastRenderedTracks === state.tracks && lastRenderedCurrentTrackId === state.currentTrackId) return;
+  lastRenderedTracks = state.tracks;
+  lastRenderedCurrentTrackId = state.currentTrackId || "";
   trackList.replaceChildren();
   trackCount.textContent = String(state.tracks.length);
 
@@ -3062,8 +3210,7 @@ function editTrack(track, source) {
   cancelEditButton.disabled = false;
   cancelEditButton.classList.remove("hidden");
   if (editingTrackSource === "library") {
-    activeAdminPanel = "tracks";
-    renderAdminPanelTabs();
+    setActiveAdminPanel("tracks", true);
   }
   if (trackForm && trackForm.scrollIntoView) trackForm.scrollIntoView({ behavior: "smooth", block: "start" });
   trackAnimeInput.focus();
@@ -3082,8 +3229,7 @@ function editReportedTrack(report) {
   trackSubmitButton.disabled = false;
   cancelEditButton.disabled = false;
   cancelEditButton.classList.remove("hidden");
-  activeAdminPanel = "tracks";
-  renderAdminPanelTabs();
+  setActiveAdminPanel("tracks", true);
   if (trackForm && trackForm.scrollIntoView) trackForm.scrollIntoView({ behavior: "smooth", block: "start" });
   trackAnimeInput.focus();
 }
@@ -3092,6 +3238,7 @@ function resetTrackForm() {
   clearTimeout(pendingTrackSaveTimer);
   pendingTrackSaveTimer = null;
   pendingTrackSave = null;
+  lastFailedTrackSave = null;
   editingTrackId = null;
   editingTrackSource = "tracks";
   if (!trackAnimeInput) return;
@@ -3115,6 +3262,7 @@ function resetTrackForm() {
   trackSubmitButton.disabled = false;
   cancelEditButton.disabled = false;
   cancelEditButton.classList.add("hidden");
+  if (retryTrackSaveButton) retryTrackSaveButton.classList.add("hidden");
 }
 
 function renderBlockedIps() {
@@ -3147,6 +3295,21 @@ function renderBlockedIps() {
   });
 }
 
+function adminPanelFromHash() {
+  const match = String(location.hash || "").match(/^#admin\/([a-zA-Z]+)$/);
+  return match ? match[1] : "";
+}
+
+function setActiveAdminPanel(panel, updateRoute) {
+  activeAdminPanel = panel || "center";
+  if (updateRoute && profile && profile.role === "moderator") {
+    const url = new URL(location.href);
+    url.hash = "admin/" + activeAdminPanel;
+    history.replaceState(null, "", url);
+  }
+  renderAdminPanelTabs();
+}
+
 function renderAdminPanelTabs() {
   if (!adminPanelButtons.length || !adminPanelSections.length) return;
   const available = adminPanelButtons.some((button) => button.dataset.adminPanelTarget === activeAdminPanel);
@@ -3173,6 +3336,7 @@ function renderModerator() {
   renderAdminSoloPlayers();
   renderAdminQuality();
   renderAdminReports();
+  renderAdminAudit();
 
   const settings = state.settings.difficultyScores || {};
   Object.keys(scoreInputs).forEach(function (key) {

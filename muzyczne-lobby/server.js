@@ -495,7 +495,7 @@ function savePersistedRooms() {
     const jsonText = JSON.stringify(persistedRoomConfigs, null, 2);
     if (postgresPool) {
       queuePostgresSave(jsonText);
-      if (rawEnv("WRITE_LOCAL_BACKUP", "") !== "1") return;
+      if (rawEnv("WRITE_LOCAL_BACKUP", "") !== "1") return "";
     }
 
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -509,8 +509,10 @@ function savePersistedRooms() {
     if (fs.existsSync(DATA_FILE)) fs.copyFileSync(DATA_FILE, DATA_BACKUP_FILE);
     fs.renameSync(tempFile, DATA_FILE);
     writeAutoBackup(jsonText);
+    return "";
   } catch (error) {
     console.warn("Nie udalo sie zapisac openingow:", error.message);
+    return error.message || "Nie udalo sie trwale zapisac danych.";
   }
 }
 
@@ -626,12 +628,12 @@ function saveRoomConfig(room) {
       difficultyScores: cloneScores(room.settings.difficultyScores)
     }
   };
-  savePersistedRooms();
+  return savePersistedRooms();
 }
 
 function clearRoomConfig(room) {
   delete persistedRoomConfigs[room.code];
-  savePersistedRooms();
+  return savePersistedRooms();
 }
 
 function createRoom(code) {
@@ -2364,6 +2366,19 @@ function numericTrackTime(value, fallback) {
 }
 
 function normalizeTrack(payload, existing) {
+  function hasOwnValue(keys) {
+    return keys.some(function (key) {
+      return Object.prototype.hasOwnProperty.call(payload, key);
+    });
+  }
+
+  function firstOwnValue(keys, fallback) {
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(payload, key)) return payload[key];
+    }
+    return fallback;
+  }
+
   const audioUrl = cleanText(payload.audioUrl, existing ? existing.audioUrl : "", 700);
   if (!audioUrl) return { error: "Brakuje linku do audio albo YouTube." };
 
@@ -2373,16 +2388,39 @@ function normalizeTrack(payload, existing) {
   const firstStartFallback = existing ? existing.startAtFirst : 0;
   const startAtFirst = numberInRange(payload.startAtFirst, numberInRange(payload.startAt, firstStartFallback, 0, 36000), 0, 36000);
   const startAtSecond = numberInRange(payload.startAtSecond, existing ? existing.startAtSecond : startAtFirst + 5, 0, 36000);
-  const titleParts = splitCombinedAnimeTitle(payload.anime || payload.title || (existing && existing.anime));
-  const englishTitle = cleanAnimeTitlePart(payload.englishTitle || payload.animeEnglish || payload.titleEnglish || (existing && existing.englishTitle) || titleParts.englishTitle);
-  const romajiTitle = cleanAnimeTitlePart(payload.romajiTitle || payload.animeRomaji || payload.titleRomaji || (existing && existing.romajiTitle) || titleParts.romajiTitle);
+  const animeInput = firstOwnValue(["anime", "title"], existing && existing.anime);
+  const titleParts = splitCombinedAnimeTitle(animeInput);
+  const englishTitle = cleanAnimeTitlePart(firstOwnValue(
+    ["englishTitle", "animeEnglish", "titleEnglish"],
+    titleParts.englishTitle || (existing && existing.englishTitle)
+  ));
+  const romajiTitle = cleanAnimeTitlePart(firstOwnValue(
+    ["romajiTitle", "animeRomaji", "titleRomaji"],
+    titleParts.romajiTitle || (existing && existing.romajiTitle)
+  ));
   const sourceTitle = rawText(payload.sourceTitle || payload.rawTitle || (existing && existing.sourceTitle), 180);
-  const anime = combinedAnimeTitle(englishTitle, romajiTitle, payload.anime || payload.title || (existing && existing.anime) || (source === "youtube" ? "Anime z YouTube" : "Anime bez nazwy"));
+  const anime = combinedAnimeTitle(englishTitle, romajiTitle, animeInput || (source === "youtube" ? "Anime z YouTube" : "Anime bez nazwy"));
   const opening = rawText(payload.opening || payload.artist, 120);
-  const coverUrl = cleanImageUrl(payload.coverUrl || payload.cover || payload.thumbnailUrl, existing ? existing.coverUrl : youtubeThumbnailUrl(videoId));
-  const description = rawText(payload.description || payload.animeDescription || payload.summary || (existing && existing.description), 420);
-  const aliases = cleanAliases(payload.aliases || payload.answerAliases || payload.altTitles || (existing && existing.aliases));
-  const fallbackAudioUrl = cleanAudioUrl(payload.fallbackAudioUrl || payload.localAudioUrl || payload.backupAudioUrl, existing ? existing.fallbackAudioUrl : "");
+  const coverKeys = ["coverUrl", "cover", "thumbnailUrl"];
+  const coverProvided = hasOwnValue(coverKeys);
+  const coverUrl = cleanImageUrl(
+    firstOwnValue(coverKeys, existing ? existing.coverUrl : youtubeThumbnailUrl(videoId)),
+    coverProvided ? "" : (existing ? existing.coverUrl : youtubeThumbnailUrl(videoId))
+  );
+  const description = rawText(firstOwnValue(
+    ["description", "animeDescription", "summary"],
+    existing && existing.description
+  ), 420);
+  const aliases = cleanAliases(firstOwnValue(
+    ["aliases", "answerAliases", "altTitles"],
+    existing && existing.aliases
+  ));
+  const fallbackKeys = ["fallbackAudioUrl", "localAudioUrl", "backupAudioUrl"];
+  const fallbackProvided = hasOwnValue(fallbackKeys);
+  const fallbackAudioUrl = cleanAudioUrl(
+    firstOwnValue(fallbackKeys, existing ? existing.fallbackAudioUrl : ""),
+    fallbackProvided ? "" : (existing ? existing.fallbackAudioUrl : "")
+  );
   const qualityStatus = normalizeQualityStatus(payload.qualityStatus, existing ? existing.qualityStatus : "ok");
   const durationSeconds = numberInRange(payload.durationSeconds, existing ? existing.durationSeconds : parseDurationText(payload.durationText), 0, 86400);
   const durationText = rawText(payload.durationText, 20) || (existing ? existing.durationText : "") || formatDurationSeconds(durationSeconds);
@@ -2605,8 +2643,22 @@ function sendRaw(socket, text) {
   socket.raw.write(encodeFrame(Buffer.from(text, "utf8")));
 }
 
-function sendError(socket, message) {
-  send(socket, { type: "error", message: message });
+function sendError(socket, message, requestId) {
+  const response = { type: "error", message: message };
+  const cleanRequestId = cleanText(requestId, "", 100);
+  if (cleanRequestId) response.requestId = cleanRequestId;
+  send(socket, response);
+}
+
+function sendModeratorActionResult(socket, payload, message) {
+  const requestId = cleanText(payload && payload.requestId, "", 100);
+  if (!requestId) return;
+  send(socket, {
+    type: "moderatorActionResult",
+    requestId: requestId,
+    action: cleanText(payload.action, "", 80),
+    message: message || "Zmiany zapisane."
+  });
 }
 
 function rejectJoin(socket, message) {
@@ -3452,7 +3504,8 @@ function updateReportedTrack(payload) {
       changed += roomChanged;
       sampleTrack = tracksResult.sampleTrack || libraryResult.sampleTrack || sampleTrack;
       touch(room);
-      saveRoomConfig(room);
+      const persistenceError = saveRoomConfig(room);
+      if (persistenceError) throw new Error(persistenceError);
       broadcast(room);
     });
 
@@ -3474,7 +3527,8 @@ function updateReportedTrack(payload) {
 
   if (!changed) return "Nie znaleziono zgloszonego openingu w bibliotece.";
   if (sampleTrack) updateReportMetaForTrack(statKey, sampleTrack);
-  savePersistedRooms();
+  const persistenceError = savePersistedRooms();
+  if (persistenceError) return persistenceError;
   broadcastModeratorStats();
   return "";
 }
@@ -3729,7 +3783,7 @@ async function handleModerator(socket, payload) {
 
   if (action === "updateLibraryTrack") {
     const error = updateLibraryTrack(room, payload || {});
-    if (error) return sendError(socket, error);
+    if (error) return sendError(socket, error, payload.requestId);
   }
 
   if (action === "updateLibraryDifficulty") {
@@ -3763,7 +3817,8 @@ async function handleModerator(socket, payload) {
 
   if (action === "updateReportedTrack") {
     const error = updateReportedTrack(payload || {});
-    if (error) return sendError(socket, error);
+    if (error) return sendError(socket, error, payload.requestId);
+    sendModeratorActionResult(socket, payload, "Zapisano zgloszony opening.");
     return;
   }
 
@@ -3778,7 +3833,7 @@ async function handleModerator(socket, payload) {
 
   if (action === "updateTrack") {
     const error = updateTrack(room, payload || {});
-    if (error) return sendError(socket, error);
+    if (error) return sendError(socket, error, payload.requestId);
   }
 
   if (action === "removeTrack") {
@@ -3954,14 +4009,22 @@ async function handleModerator(socket, payload) {
     });
   }
 
+  let persistenceError = "";
   if (action === "resetRoom") {
-    clearRoomConfig(room);
+    persistenceError = clearRoomConfig(room) || "";
   } else if (["addTrack", "addLibraryTrack", "addLibraryToMain", "removeLibraryTrack", "updateLibraryTrack", "updateLibraryDifficulty", "importPlaylist", "updateTrack", "removeTrack", "selectTrack", "clearTrackResult", "updateSettings", "play", "guessed", "awardBuzz", "revealTitle", "blockIp", "unblockIp"].includes(action)) {
-    saveRoomConfig(room);
+    persistenceError = saveRoomConfig(room) || "";
   }
 
   touch(room);
   broadcast(room);
+  if (persistenceError && payload.requestId) return sendError(socket, persistenceError, payload.requestId);
+  if (action === "updateLibraryTrack") {
+    sendModeratorActionResult(socket, payload, "Zapisano opening w bibliotece.");
+  }
+  if (action === "updateTrack") {
+    sendModeratorActionResult(socket, payload, "Zapisano opening.");
+  }
 }
 
 function updateProfile(socket, payload) {
@@ -3987,7 +4050,7 @@ function handleMessage(socket, text) {
   if (payload.type === "profile") return updateProfile(socket, payload);
   if (payload.type === "moderator") {
     Promise.resolve(handleModerator(socket, payload)).catch(function () {
-      sendError(socket, "Nie udalo sie wykonac akcji administratora.");
+      sendError(socket, "Nie udalo sie wykonac akcji administratora.", payload.requestId);
     });
   }
 }

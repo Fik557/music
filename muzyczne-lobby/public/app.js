@@ -1183,25 +1183,44 @@ if (soloDailyButton) {
 }
 
 if (adminPanelTabs) {
+  function closeAdminNavDropdowns(exceptDropdown) {
+    adminNavDropdowns.forEach(function (dropdown) {
+      const isOpen = dropdown === exceptDropdown;
+      dropdown.classList.toggle("open", isOpen);
+      const trigger = dropdown.querySelector(".admin-nav-trigger");
+      if (trigger) trigger.setAttribute("aria-expanded", String(isOpen));
+    });
+  }
+
   adminPanelTabs.addEventListener("click", function (event) {
     const button = event.target.closest("[data-admin-panel-target]");
     if (!button) return;
-    adminNavDropdowns.forEach(function (dropdown) { dropdown.open = false; });
+    closeAdminNavDropdowns();
     setActiveAdminPanel(button.dataset.adminPanelTarget || "center", true);
   });
 
   adminNavDropdowns.forEach(function (dropdown) {
+    const trigger = dropdown.querySelector(".admin-nav-trigger");
+    if (trigger) {
+      trigger.addEventListener("click", function (event) {
+        event.stopPropagation();
+        closeAdminNavDropdowns(dropdown.classList.contains("open") ? null : dropdown);
+      });
+    }
+
     dropdown.addEventListener("mouseenter", function () {
       if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
-      adminNavDropdowns.forEach(function (otherDropdown) {
-        otherDropdown.open = otherDropdown === dropdown;
-      });
+      closeAdminNavDropdowns(dropdown);
     });
 
     dropdown.addEventListener("mouseleave", function () {
       if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
-      dropdown.open = false;
+      closeAdminNavDropdowns();
     });
+  });
+
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest(".admin-nav-dropdown")) closeAdminNavDropdowns();
   });
 }
 

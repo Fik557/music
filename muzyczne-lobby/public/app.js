@@ -119,6 +119,13 @@ const trackDescriptionInput = $("#trackDescriptionInput");
 const trackAliasesInput = $("#trackAliasesInput");
 const trackSubmitButton = $("#trackSubmitButton");
 const cancelEditButton = $("#cancelEditButton");
+const trackEditPreview = $("#trackEditPreview");
+const trackPreviewStatus = $("#trackPreviewStatus");
+const trackPreviewFirstButton = $("#trackPreviewFirstButton");
+const trackPreviewSecondButton = $("#trackPreviewSecondButton");
+const trackPreviewStopButton = $("#trackPreviewStopButton");
+const trackPreviewMedia = $("#trackPreviewMedia");
+const trackSaveStatus = $("#trackSaveStatus");
 const trackList = $("#trackList");
 const trackCount = $("#trackCount");
 const playlistForm = $("#playlistForm");
@@ -210,6 +217,9 @@ let reconnectTimer = null;
 let toastTimer = null;
 let editingTrackId = null;
 let editingTrackSource = "tracks";
+let pendingTrackSave = null;
+let pendingTrackSaveTimer = null;
+let trackPreviewAudio = null;
 let lastAudioErrorAt = 0;
 let youtubeApiRequested = false;
 let youtubeApiReady = false;
@@ -698,6 +708,10 @@ function connect() {
       syncAudio();
     }
     if (payload.type === "error") {
+      if (payload.requestId && pendingTrackSave && payload.requestId === pendingTrackSave.requestId) {
+        finishTrackSave(false, payload.message);
+        return;
+      }
       if (playlistImportButton) playlistImportButton.disabled = false;
       if (youtubeSearchButton) youtubeSearchButton.disabled = false;
       if (audioUploadButton) audioUploadButton.disabled = false;
@@ -706,6 +720,11 @@ function connect() {
       if (playlistImportStatus) playlistImportStatus.textContent = payload.message;
       if (audioUploadStatus) audioUploadStatus.textContent = payload.message;
       showToast(payload.message);
+    }
+    if (payload.type === "moderatorActionResult") {
+      if (pendingTrackSave && payload.requestId === pendingTrackSave.requestId) {
+        finishTrackSave(true, payload.message);
+      }
     }
     if (payload.type === "joinRejected") returnToLogin(payload.message);
     if (payload.type === "kicked") returnToLogin(payload.message || "Administrator wyrzucil Cie z gry.");
@@ -757,6 +776,7 @@ function connect() {
 
   socket.addEventListener("close", function () {
     connectionStatus.textContent = "offline";
+    if (pendingTrackSave) finishTrackSave(false, "Polaczenie zostalo przerwane. Dane pozostaly w formularzu.");
     clearTimeout(reconnectTimer);
     if (profile) reconnectTimer = setTimeout(connect, 1000);
   });
@@ -1262,8 +1282,46 @@ if (importDataButton) {
   });
 }
 
+function trackSubmitLabel() {
+  if (editingTrackSource === "report") return "Zapisz zgloszony";
+  return editingTrackSource === "library" ? "Zapisz biblioteke" : "Zapisz";
+}
+
+function finishTrackSave(success, message) {
+  clearTimeout(pendingTrackSaveTimer);
+  pendingTrackSaveTimer = null;
+  pendingTrackSave = null;
+  trackSubmitButton.disabled = false;
+  cancelEditButton.disabled = false;
+  if (success) {
+    if (trackSaveStatus) trackSaveStatus.textContent = message || "Zmiany zapisane.";
+    showToast(message || "Zmiany zapisane.");
+    resetTrackForm();
+    return;
+  }
+  trackSubmitButton.textContent = trackSubmitLabel();
+  if (trackSaveStatus) trackSaveStatus.textContent = message || "Nie udalo sie zapisac. Dane pozostaly w formularzu.";
+  showToast(message || "Nie udalo sie zapisac. Dane pozostaly w formularzu.");
+}
+
+function beginTrackSave(action, data) {
+  const requestId = "track_save_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+  pendingTrackSave = { requestId: requestId, action: action };
+  trackSubmitButton.disabled = true;
+  cancelEditButton.disabled = true;
+  trackSubmitButton.textContent = "Zapisywanie...";
+  if (trackSaveStatus) trackSaveStatus.textContent = "Zapisywanie zmian...";
+  mod(action, Object.assign({ requestId: requestId }, data || {}));
+  clearTimeout(pendingTrackSaveTimer);
+  pendingTrackSaveTimer = setTimeout(function () {
+    if (!pendingTrackSave || pendingTrackSave.requestId !== requestId) return;
+    finishTrackSave(false, "Serwer nie potwierdzil zapisu. Sprobuj ponownie.");
+  }, 12000);
+}
+
 trackForm.addEventListener("submit", function (event) {
   event.preventDefault();
+  if (pendingTrackSave) return;
   const payload = {
     track: {
       anime: trackAnimeInput.value,
@@ -1281,24 +1339,50 @@ trackForm.addEventListener("submit", function (event) {
 
   if (editingTrackId) {
     if (editingTrackSource === "report") {
-      mod("updateReportedTrack", Object.assign({ trackKey: editingTrackId }, payload));
-      showToast("Zapisano zgloszony opening.");
+      beginTrackSave("updateReportedTrack", Object.assign({ trackKey: editingTrackId }, payload));
     } else {
       const action = editingTrackSource === "library" ? "updateLibraryTrack" : "updateTrack";
-      mod(action, Object.assign({ trackId: editingTrackId }, payload));
-      showToast(editingTrackSource === "library" ? "Zapisano opening w bibliotece." : "Zapisano opening.");
+      beginTrackSave(action, Object.assign({ trackId: editingTrackId }, payload));
     }
   } else {
     mod("addTrack", payload);
+    resetTrackForm();
   }
-  resetTrackForm();
 });
 
 if (localAudioSelect) {
   localAudioSelect.addEventListener("change", function () {
-    if (localAudioSelect.value) trackUrlInput.value = localAudioSelect.value;
+    if (localAudioSelect.value) {
+      trackUrlInput.value = localAudioSelect.value;
+      if (editingTrackId) renderTrackPreview(1, false);
+    }
   });
 }
+
+if (trackPreviewFirstButton) {
+  trackPreviewFirstButton.addEventListener("click", function () {
+    renderTrackPreview(1, true);
+  });
+}
+
+if (trackPreviewSecondButton) {
+  trackPreviewSecondButton.addEventListener("click", function () {
+    renderTrackPreview(2, true);
+  });
+}
+
+if (trackPreviewStopButton) {
+  trackPreviewStopButton.addEventListener("click", function () {
+    stopTrackPreview("Podglad zatrzymany.");
+  });
+}
+
+[trackUrlInput, trackStartFirstInput, trackStartSecondInput].forEach(function (input) {
+  if (!input) return;
+  input.addEventListener("change", function () {
+    if (editingTrackId) renderTrackPreview(1, false);
+  });
+});
 
 if (audioUploadButton) {
   audioUploadButton.addEventListener("click", async function () {
@@ -2866,21 +2950,116 @@ function renderTracks() {
   });
 }
 
+function stopTrackPreview(message) {
+  if (trackPreviewAudio) {
+    trackPreviewAudio.pause();
+    trackPreviewAudio.removeAttribute("src");
+    trackPreviewAudio.load();
+    trackPreviewAudio = null;
+  }
+  if (trackPreviewMedia) {
+    trackPreviewMedia.replaceChildren(node("p", "muted", message || "Wybierz fragment do odtworzenia."));
+  }
+  if (trackPreviewStatus) trackPreviewStatus.textContent = "Wybierz fragment";
+}
+
+function renderTrackPreview(segment, autoplay) {
+  if (!trackPreviewMedia) return;
+  const url = String(trackUrlInput.value || "").trim();
+  const start = segment === 2
+    ? finiteNumber(trackStartSecondInput.value, 5)
+    : finiteNumber(trackStartFirstInput.value, 0);
+  const label = "Fragment " + (segment === 2 ? "2" : "1") + " od " + start.toFixed(1) + " s";
+
+  stopTrackPreview();
+  if (!url) {
+    if (trackPreviewStatus) trackPreviewStatus.textContent = "Brak linku";
+    trackPreviewMedia.replaceChildren(node("p", "muted", "Wpisz link do piosenki."));
+    return;
+  }
+
+  const videoId = youtubeIdFromUrl(url);
+  if (videoId) {
+    const iframe = document.createElement("iframe");
+    iframe.title = "Podglad openingu z YouTube";
+    iframe.allow = "autoplay; encrypted-media; picture-in-picture";
+    iframe.allowFullscreen = true;
+    iframe.referrerPolicy = "strict-origin-when-cross-origin";
+    iframe.src = youtubeEmbedUrl(videoId) + "&start=" + Math.max(0, Math.floor(start)) + "&autoplay=" + (autoplay ? "1" : "0");
+    trackPreviewMedia.replaceChildren(iframe);
+    if (trackPreviewStatus) trackPreviewStatus.textContent = label;
+    return;
+  }
+
+  const preview = document.createElement("audio");
+  preview.controls = true;
+  preview.preload = "metadata";
+  preview.playsInline = true;
+  preview.src = url;
+  preview.volume = pageVolume;
+  trackPreviewAudio = preview;
+  const seekAndPlay = function () {
+    if (trackPreviewAudio !== preview) return;
+    try {
+      preview.currentTime = Math.max(0, start);
+    } catch (error) {}
+    if (autoplay) {
+      preview.play().catch(function () {
+        if (trackPreviewStatus) trackPreviewStatus.textContent = label + " - kliknij Play";
+      });
+    }
+  };
+  preview.addEventListener("loadedmetadata", seekAndPlay, { once: true });
+  preview.addEventListener("error", function () {
+    if (trackPreviewStatus) trackPreviewStatus.textContent = "Nie udalo sie zaladowac podgladu";
+  }, { once: true });
+  trackPreviewMedia.replaceChildren(preview);
+  if (trackPreviewStatus) trackPreviewStatus.textContent = label;
+  if (preview.readyState >= 1) seekAndPlay();
+}
+
+function showTrackEditPreview() {
+  if (!trackEditPreview) return;
+  trackEditPreview.classList.remove("hidden");
+  renderTrackPreview(1, false);
+}
+
+function latestTrackForEdit(track) {
+  const trackId = track && track.id;
+  if (!trackId || !state) return track || {};
+  const lists = [state.tracks || [], state.libraryTracks || []];
+  for (const list of lists) {
+    const current = list.find(function (entry) { return entry && entry.id === trackId; });
+    if (current) return current;
+  }
+  return track || {};
+}
+
+function fillTrackForm(track) {
+  const source = track || {};
+  trackAnimeInput.value = source.anime || "";
+  trackOpeningInput.value = source.opening || "";
+  trackDifficultyInput.value = source.difficulty || "medium";
+  trackUrlInput.value = source.audioUrl || "";
+  if (localAudioSelect) localAudioSelect.value = source.audioUrl || "";
+  if (fallbackAudioSelect) fallbackAudioSelect.value = source.fallbackAudioUrl || "";
+  trackStartFirstInput.value = String(finiteNumber(source.startAtFirst, 0));
+  trackStartSecondInput.value = String(finiteNumber(source.startAtSecond, 5));
+  trackCoverInput.value = source.coverUrl || "";
+  trackDescriptionInput.value = source.description || "";
+  if (trackAliasesInput) trackAliasesInput.value = Array.isArray(source.aliases) ? source.aliases.join("\n") : (source.aliases || "");
+  if (trackSaveStatus) trackSaveStatus.textContent = "Wczytano aktualne dane openingu.";
+  showTrackEditPreview();
+}
+
 function editTrack(track, source) {
+  const currentTrack = latestTrackForEdit(track);
   editingTrackId = track.id;
   editingTrackSource = source === "library" ? "library" : "tracks";
-  trackAnimeInput.value = track.anime || "";
-  trackOpeningInput.value = track.opening || "";
-  trackDifficultyInput.value = track.difficulty || "medium";
-  trackUrlInput.value = track.audioUrl || "";
-  if (localAudioSelect) localAudioSelect.value = track.audioUrl || "";
-  if (fallbackAudioSelect) fallbackAudioSelect.value = track.fallbackAudioUrl || "";
-  trackStartFirstInput.value = String(finiteNumber(track.startAtFirst, 0));
-  trackStartSecondInput.value = String(finiteNumber(track.startAtSecond, 5));
-  trackCoverInput.value = track.coverUrl || "";
-  trackDescriptionInput.value = track.description || "";
-  if (trackAliasesInput) trackAliasesInput.value = Array.isArray(track.aliases) ? track.aliases.join("\n") : (track.aliases || "");
+  fillTrackForm(currentTrack);
   trackSubmitButton.textContent = editingTrackSource === "library" ? "Zapisz biblioteke" : "Zapisz";
+  trackSubmitButton.disabled = false;
+  cancelEditButton.disabled = false;
   cancelEditButton.classList.remove("hidden");
   if (editingTrackSource === "library") {
     activeAdminPanel = "tracks";
@@ -2897,18 +3076,11 @@ function editReportedTrack(report) {
     return;
   }
   editingTrackSource = "report";
-  trackAnimeInput.value = report.anime || "";
-  trackOpeningInput.value = report.opening || "";
-  trackDifficultyInput.value = report.difficulty || "medium";
-  trackUrlInput.value = report.audioUrl || "";
-  if (localAudioSelect) localAudioSelect.value = report.audioUrl || "";
-  if (fallbackAudioSelect) fallbackAudioSelect.value = report.fallbackAudioUrl || "";
-  trackStartFirstInput.value = String(finiteNumber(report.startAtFirst, 0));
-  trackStartSecondInput.value = String(finiteNumber(report.startAtSecond, 5));
-  trackCoverInput.value = report.coverUrl || "";
-  trackDescriptionInput.value = report.description || "";
-  if (trackAliasesInput) trackAliasesInput.value = Array.isArray(report.aliases) ? report.aliases.join("\n") : (report.aliases || "");
+  const currentTrack = latestTrackForEdit({ id: report.trackId });
+  fillTrackForm(currentTrack && currentTrack.audioUrl ? currentTrack : report);
   trackSubmitButton.textContent = "Zapisz zgloszony";
+  trackSubmitButton.disabled = false;
+  cancelEditButton.disabled = false;
   cancelEditButton.classList.remove("hidden");
   activeAdminPanel = "tracks";
   renderAdminPanelTabs();
@@ -2917,6 +3089,9 @@ function editReportedTrack(report) {
 }
 
 function resetTrackForm() {
+  clearTimeout(pendingTrackSaveTimer);
+  pendingTrackSaveTimer = null;
+  pendingTrackSave = null;
   editingTrackId = null;
   editingTrackSource = "tracks";
   if (!trackAnimeInput) return;
@@ -2933,7 +3108,12 @@ function resetTrackForm() {
   trackCoverInput.value = "";
   trackDescriptionInput.value = "";
   if (trackAliasesInput) trackAliasesInput.value = "";
+  stopTrackPreview("Podglad pojawi sie podczas edycji.");
+  if (trackEditPreview) trackEditPreview.classList.add("hidden");
+  if (trackSaveStatus) trackSaveStatus.textContent = "";
   trackSubmitButton.textContent = "Dodaj";
+  trackSubmitButton.disabled = false;
+  cancelEditButton.disabled = false;
   cancelEditButton.classList.add("hidden");
 }
 

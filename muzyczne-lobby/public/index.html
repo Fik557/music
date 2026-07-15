@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#17121b" />
     <title>Anime Opening Quiz</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=13" />
+    <link rel="stylesheet" href="/styles.css?v=14" />
   </head>
   <body>
     <main class="shell">
@@ -113,6 +113,61 @@
             <button class="icon-button" id="leaveButton" type="button" title="Wyjdz">×</button>
           </div>
         </header>
+
+        <nav class="admin-site-nav hidden" id="adminPanelTabs" aria-label="Panel administratora">
+          <div class="admin-site-brand">
+            <span class="admin-site-mark" aria-hidden="true">A</span>
+            <div>
+              <strong>Panel administratora</strong>
+              <small id="adminNavCurrent">Centrum</small>
+            </div>
+          </div>
+          <div class="admin-site-links">
+            <button class="admin-panel-card active" type="button" data-admin-panel-target="center">Centrum</button>
+            <button class="admin-panel-card" type="button" data-admin-panel-target="rooms">Gry</button>
+            <details class="admin-nav-dropdown">
+              <summary>Muzyka</summary>
+              <div class="admin-nav-menu">
+                <button class="admin-panel-card" type="button" data-admin-panel-target="tracks">Openingi</button>
+                <button class="admin-panel-card" type="button" data-admin-panel-target="library">Biblioteka</button>
+                <button class="admin-panel-card" type="button" data-admin-panel-target="playlist">Import playlisty</button>
+                <button class="admin-panel-card" type="button" data-admin-panel-target="search">Wyszukiwarka YouTube</button>
+              </div>
+            </details>
+            <details class="admin-nav-dropdown">
+              <summary>Analiza</summary>
+              <div class="admin-nav-menu">
+                <button class="admin-panel-card" type="button" data-admin-panel-target="stats">% zgadniec</button>
+                <button class="admin-panel-card" type="button" data-admin-panel-target="soloPlayers">Ranking solo</button>
+                <button class="admin-panel-card" type="button" data-admin-panel-target="quality">Jakosc openingow</button>
+                <button class="admin-panel-card" type="button" data-admin-panel-target="reports">Zgloszenia</button>
+              </div>
+            </details>
+            <details class="admin-nav-dropdown">
+              <summary>Ustawienia</summary>
+              <div class="admin-nav-menu admin-nav-menu-right">
+                <button class="admin-panel-card" type="button" data-admin-panel-target="scoring">Punktacja</button>
+                <button class="admin-panel-card" type="button" data-admin-panel-target="blocked">Zablokowane osoby</button>
+                <button class="admin-panel-card" type="button" data-admin-panel-target="history">Historia zmian</button>
+                <button class="admin-panel-card" type="button" data-admin-panel-target="backup">Backup</button>
+              </div>
+            </details>
+          </div>
+        </nav>
+
+        <header class="admin-page-heading hidden" id="adminPageHeading">
+          <div>
+            <p class="eyebrow">Panel administratora</p>
+            <h2 id="adminPageTitle">Centrum</h2>
+            <p class="muted" id="adminPageDescription">Sterowanie gra i najwazniejsze informacje.</p>
+          </div>
+        </header>
+
+        <section class="admin-page-loader hidden" id="adminPageLoader" aria-live="polite" aria-label="Ladowanie podstrony">
+          <span class="admin-loader-spinner" aria-hidden="true"></span>
+          <strong id="adminLoaderLabel">Ladowanie podstrony...</strong>
+          <span class="admin-loader-line" aria-hidden="true"></span>
+        </section>
 
         <div class="grid" id="mainGrid">
           <aside class="solo-day-streak-card hidden" id="soloDayStreakCard" aria-live="polite">
@@ -226,23 +281,6 @@
         </div>
 
         <section class="moderator-panel hidden" id="moderatorPanel">
-          <nav class="admin-panel-tabs" id="adminPanelTabs" aria-label="Panel administratora">
-            <button class="admin-panel-card active" type="button" data-admin-panel-target="center">Centrum</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="rooms">Gry</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="tracks">Openingi</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="playlist">Import playlisty</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="search">Wyszukiwarka YouTube</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="library">Biblioteka openingow</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="blocked">Zablokowane osoby</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="scoring">Punktacja poziomow</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="stats">% zgadniec</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="soloPlayers">Solo</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="quality">Jakosc</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="backup">Backup</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="reports">Zgloszenia</button>
-            <button class="admin-panel-card" type="button" data-admin-panel-target="history">Historia zmian</button>
-          </nav>
-
           <div class="mod-section mod-controls" data-admin-panel="center">
             <div class="panel-title">
               <h2>Sterowanie</h2>
@@ -534,6 +572,6 @@
     <audio id="songAudio" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></audio>
     <div class="youtube-stage" id="youtubePlayer" aria-hidden="true"></div>
     <div class="toast hidden" id="toast"></div>
-    <script src="/app.js?v=15"></script>
+    <script src="/app.js?v=16"></script>
   </body>
 </html>

@@ -1,6 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 
 const SESSION_KEY = "animeOpeningQuizSession";
+const SOLO_USER_KEY = "animeOpeningQuizSoloUser";
 const PAGE_VOLUME_KEY = "animeOpeningQuizVolume";
 const MAX_AVATAR_DATA_LENGTH = 60000;
 const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -29,6 +30,7 @@ const loginTitle = $("#loginTitle");
 const loginSubmitButton = $("#loginSubmitButton");
 const soloLoginButton = $("#soloLoginButton");
 const nicknameField = $("#nicknameField");
+const nicknameLabel = $("#nicknameLabel");
 const nicknameInput = $("#nicknameInput");
 const roomField = $("#roomField");
 const groupModeRadio = $("#groupModeRadio");
@@ -406,6 +408,28 @@ function clearSession() {
   } catch (error) {}
 }
 
+function loadSoloUser() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SOLO_USER_KEY) || "null");
+    if (!saved || typeof saved !== "object") return null;
+    return {
+      clientId: String(saved.clientId || "").slice(0, 80),
+      nickname: String(saved.nickname || "").slice(0, 40)
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function saveSoloUser(clientId, nickname) {
+  try {
+    localStorage.setItem(SOLO_USER_KEY, JSON.stringify({
+      clientId: String(clientId || "").slice(0, 80),
+      nickname: String(nickname || "").slice(0, 40)
+    }));
+  } catch (error) {}
+}
+
 function renderAvatarPreview() {
   if (!avatarPreview) return;
   avatarPreview.style.backgroundImage = avatarData ? "url(" + avatarData + ")" : "";
@@ -624,7 +648,8 @@ function setLoginMode(mode) {
   const isSoloLanding = mode === "solo";
   const isAdmin = mode === "moderator";
   const isPlayer = mode === "player";
-  if (nicknameField) nicknameField.classList.toggle("hidden", isSoloLanding);
+  if (nicknameField) nicknameField.classList.remove("hidden");
+  if (nicknameLabel) nicknameLabel.textContent = isSoloLanding ? "Nazwa gracza" : "Nick";
   if (roomField) roomField.classList.toggle("hidden", isSoloLanding);
   if (avatarField) avatarField.classList.toggle("hidden", isSoloLanding);
   playerFields.classList.toggle("hidden", !isPlayer);
@@ -636,10 +661,10 @@ function setLoginMode(mode) {
   loginTitle.textContent = isAdmin ? "Panel administratora" : (isPlayer ? "Dolacz do gry" : "Granie solo");
   loginSubmitButton.textContent = isAdmin ? "Wejdz jako administrator" : "Wejdz jako gracz";
   moderatorPasswordInput.required = isAdmin;
-  nicknameInput.required = !isSoloLanding;
+  nicknameInput.required = true;
   updatePlayerModeFields();
   if (isAdmin) moderatorPasswordInput.focus();
-  if (isPlayer) nicknameInput.focus();
+  if (isPlayer || isSoloLanding) nicknameInput.focus();
 }
 
 function connect() {
@@ -817,7 +842,13 @@ function switchAdminRoom(roomCode) {
 }
 
 function join(role) {
-  const nickname = nicknameInput.value.trim() || (role === "moderator" ? "Administrator" : "Gracz");
+  const enteredNickname = nicknameInput.value.trim();
+  if (role === "solo" && !enteredNickname) return showToast("Wpisz nazwe gracza.");
+  const nickname = enteredNickname || (role === "moderator" ? "Administrator" : "Gracz");
+  const savedSoloUser = role === "solo" ? loadSoloUser() : null;
+  const clientId = role === "solo" && savedSoloUser && savedSoloUser.clientId
+    ? savedSoloUser.clientId
+    : makeClientId();
   const roomCode = role === "solo" ? "SOLO" : cleanRoom(roomInput.value);
   const playMode = role === "solo" ? "solo" : (role === "player" ? currentPlayMode() : "group");
   const team = playMode === "solo" ? nickname : teamInput.value.trim();
@@ -836,7 +867,8 @@ function join(role) {
     renderAvatarPreview();
     showToast("Zdjecie profilowe bylo za duze, dolaczasz bez zdjecia.");
   }
-  profile = { clientId: makeClientId(), nickname, team, groupPassword, moderatorPassword, roomCode, role, playMode, avatar: safeAvatar };
+  profile = { clientId, nickname, team, groupPassword, moderatorPassword, roomCode, role, playMode, avatar: safeAvatar };
+  if (role === "solo") saveSoloUser(clientId, nickname);
   saveSession();
   loginView.classList.add("hidden");
   appView.classList.remove("hidden");
@@ -873,7 +905,12 @@ function returnToLogin(message) {
 
 function restoreSession() {
   const saved = loadSession();
-  if (!saved) return;
+  if (!saved) {
+    const savedSoloUser = loadSoloUser();
+    if (savedSoloUser && savedSoloUser.nickname) nicknameInput.value = savedSoloUser.nickname;
+    return;
+  }
+  if (saved.role === "solo") saveSoloUser(saved.clientId, saved.nickname);
   fillLoginFields(saved);
   setLoginMode(saved.role === "solo" ? "solo" : (saved.role === "moderator" ? "moderator" : "player"));
   profile = saved;

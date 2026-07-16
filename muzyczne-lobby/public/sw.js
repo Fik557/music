@@ -1,4 +1,4 @@
-const CACHE_NAME = "anime-opening-quiz-v21";
+const CACHE_NAME = "anime-opening-quiz-v22";
 const STATIC_ASSETS = [
   "/",
   "/styles.css",
@@ -73,4 +73,3 @@ self.addEventListener("fetch", function (event) {
     });
   }));
 });
-

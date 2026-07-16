@@ -9,6 +9,7 @@ const AVATAR_OUTPUT_SIZE = 96;
 const AVATAR_OUTPUT_QUALITY = 0.72;
 const MEDIA_LOAD_TIMEOUT_MS = 5000;
 const CLIP_END_PAUSE_EARLY_SECONDS = 0.08;
+const AUDIO_DRIFT_CORRECTION_SECONDS = 1.75;
 const DIFFICULTY_LABELS = {
   very_easy: "Very easy",
   easy: "Easy",
@@ -183,6 +184,7 @@ const decisionText = $("#decisionText");
 const settingsForm = $("#settingsForm");
 const toast = $("#toast");
 const audio = $("#songAudio");
+const audioSecondary = $("#songAudioSecondary");
 const adminPanelTabs = $("#adminPanelTabs");
 const adminPanelButtons = Array.from(document.querySelectorAll("[data-admin-panel-target]"));
 const adminPanelSections = Array.from(document.querySelectorAll("[data-admin-panel]"));
@@ -358,6 +360,7 @@ function pageVolumePercent() {
 function applyPageVolume(syncPlayback) {
   const percent = pageVolumePercent();
   audio.volume = pageVolume;
+  audioSecondary.volume = pageVolume;
   if (volumeSlider) volumeSlider.value = String(percent);
   if (volumeValue) volumeValue.textContent = percent + "%";
   try {
@@ -517,72 +520,7 @@ function cropAvatarImage(image, zoom, offsetX, offsetY) {
   const drawHeight = image.height * scale;
   const drawX = (size - drawWidth) / 2 + safeOffsetX * size * 0.18;
   const drawY = (size - drawHeight) / 2 + safeOffsetY * size * 0.18;
-  canvas.width = size;
-  canvas.height = size;
-  context.clearRect(0, 0, size, size);
-  context.drawImage(image, drawX, drawY, drawW…29659 tokens truncated…n (button) {
-    const active = button.dataset.adminPanelTarget === activeAdminPanel;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", active ? "true" : "false");
-  });
-
-  adminNavDropdowns.forEach(function (dropdown) {
-    dropdown.classList.toggle("contains-active", Boolean(dropdown.querySelector(".admin-panel-card.active")));
-  });
-
-  adminPanelSections.forEach(function (section) {
-    section.classList.toggle("hidden", adminPageLoading || section.dataset.adminPanel !== activeAdminPanel);
-  });
-}
-
-function renderModerator() {
-  if (!profile || profile.role !== "moderator") return;
-  renderAdminPanelTabs();
-  renderBuzzDecision();
-  renderAdminCenter();
-  renderAdminRooms();
-  renderAdminSoloStats();
-  renderAdminSoloPlayers();
-  renderAdminQuality();
-  renderAdminReports();
-  renderAdminAudit();
-
-  const settings = state.settings.difficultyScores || {};
-  Object.keys(scoreInputs).forEach(function (key) {
-    const scores = settings[key] || { first: 0, second: 0 };
-    scoreInputs[key].first.value = scores.first;
-    scoreInputs[key].second.value = scores.second;
-  });
-}
-
-function renderBuzzDecision() {
-  const buzzer = state.currentBuzzer;
-  const expired = isAnswerExpired(buzzer);
-  const countdown = answerCountdownText(buzzer);
-  const answerLimit = buzzer ? Math.round(Number(buzzer.answerLimit || 15)) : 15;
-  if (buzzDecision) buzzDecision.classList.toggle("answer-expired", Boolean(buzzer && expired));
-
-  buzzedAtLabel.textContent = buzzer ? formatSeconds(buzzer.buzzedAt) + " / " + buzzer.label + " / " + countdown : "brak";
-  if (!buzzer && (state.roundClosed || state.revealed)) {
-    decisionText.textContent = "Opening jest zamkniety po zgadnieciu. Gracze sa zablokowani, mozesz odpauzowac i puscic go do konca.";
-  } else if (!buzzer) {
-    decisionText.textContent = "Nikt jeszcze nie zatrzymal openingu.";
-  } else if (expired) {
-    decisionText.textContent = buzzer.nickname + " (" + buzzer.team + ") nie odpowiedzial/a w " + answerLimit + " s. Wybierz: dodac " + buzzer.suggestedPoints + " pkt albo nie dodawac punktow.";
-  } else {
-    decisionText.textContent = buzzer.nickname + " (" + buzzer.team + ") zatrzymal/a opening. Ma " + countdown + ". Zgadniete doda automatycznie: " + buzzer.suggestedPoints + " pkt.";
-  }
-
-  guessedButton.disabled = !buzzer;
-  awardSuggestedButton.disabled = !buzzer || buzzer.suggestedPoints <= 0;
-  awardTwoButton.disabled = !buzzer;
-  awardOneButton.disabled = !buzzer;
-  rejectBuzzButton.disabled = !buzzer;
-  resumeFromBuzzButton.disabled = state.phase !== "paused" || Boolean(buzzer);
-
-  guessedButton.textContent = expired ? "Dodaj punkty" : "Zgadniete";
-  awardSuggestedButton.textContent = expired ? "Dodaj sugerowane" : "Dodaj sugerowane";
-  rejectBuzzButton.textContent = expired ? "Nie dodawaj punktow" : "Bledne - zablokuj grupe";
+…30422 tokens truncated… rejectBuzzButton.textContent = expired ? "Nie dodawaj punktow" : "Bledne - zablokuj grupe";
 }
 
 function renderBuzzer() {
@@ -767,14 +705,57 @@ function reportMediaError(track, reason) {
   if (mediaErrorSentKey === key) return;
   mediaErrorSentKey = key;
   clearMediaLoadTimer();
-  audio.pause();
+  pauseLocalAudio();
   pauseYouTube();
   send({ type: "soloAction", action: "mediaError", key: mediaActionKey(track), reason: reason || "Nie zaladowano openingu." });
 }
 
+function pauseLocalAudio() {
+  audio.pause();
+  audioSecondary.pause();
+}
+
+function resetPreparedAudio(media) {
+  media._preparedKey = "";
+  media._preparedTime = -1;
+}
+
+function ensureLocalAudioSource(media, desiredUrl) {
+  if (media.src === desiredUrl) return false;
+  media.src = desiredUrl;
+  media.load();
+  resetPreparedAudio(media);
+  return true;
+}
+
+function prepareLocalAudioAt(media, desiredUrl, desiredTime, preparedKey) {
+  ensureLocalAudioSource(media, desiredUrl);
+  media.volume = pageVolume;
+
+  if (media.readyState >= 1 && !media.seeking) {
+    const drift = Math.abs((media.currentTime || 0) - desiredTime);
+    if (media._preparedKey !== preparedKey || drift > 0.2) {
+      try {
+        media.currentTime = desiredTime;
+        media._preparedKey = preparedKey;
+        media._preparedTime = desiredTime;
+      } catch (error) {
+        return false;
+      }
+    }
+  }
+
+  if (media.readyState < 3 || media.seeking) return false;
+  return Math.abs((media.currentTime || 0) - desiredTime) <= 0.45;
+}
+
+function localAudioTooShort(media, desiredTime) {
+  return Number.isFinite(media.duration) && media.duration > 0 && desiredTime >= media.duration;
+}
+
 function syncAudio(force) {
   if (!state || !state.currentTrack) {
-    audio.pause();
+    pauseLocalAudio();
     pauseYouTube();
     clearMediaLoadTimer();
     return;
@@ -786,7 +767,7 @@ function syncAudio(force) {
   }
   const clipElapsed = estimatedElapsed();
   if (isPlaybackAtLocalEnd(clipElapsed)) {
-    audio.pause();
+    pauseLocalAudio();
     pauseYouTube();
     return;
   }
@@ -799,65 +780,90 @@ function syncAudio(force) {
     pauseYouTube();
   }
   if (track.source === "youtube") {
+    pauseLocalAudio();
     syncYouTube(track, force, clipElapsed);
     return;
   }
 
   pauseYouTube();
   audio.volume = pageVolume;
+  audioSecondary.volume = pageVolume;
   const desiredUrl = new URL(track.audioUrl, location.href).href;
-  if (audio.src !== desiredUrl) {
-    audio.src = desiredUrl;
-    audio.load();
+  const primarySourceChanged = ensureLocalAudioSource(audio, desiredUrl);
+  const secondarySourceChanged = ensureLocalAudioSource(audioSecondary, desiredUrl);
+  const sourceChanged = primarySourceChanged || secondarySourceChanged;
+  if (sourceChanged) {
     lastMediaKey = "";
     lastMediaSegment = "";
   }
 
+  const split = Number((state.settings && state.settings.segmentSplit) || 5);
+  const firstTiming = desiredSourceTime(track, 0);
+  const secondTiming = desiredSourceTime(track, split);
   const timing = desiredSourceTime(track, clipElapsed);
   const desiredTime = timing.seconds;
   const mediaKey = track.id + "|" + track.audioUrl;
-  const drift = Math.abs((audio.currentTime || 0) - desiredTime);
   const soloLoading = isSoloLoadingTrack(track);
 
   if (soloLoading) startMediaLoadWatch(track);
 
-  if (Number.isFinite(audio.duration) && audio.duration > 0 && desiredTime > audio.duration) {
+  const firstPreparedKey = mediaKey + "|first";
+  const secondPreparedKey = mediaKey + "|second";
+  const needsSegmentPreparation = soloLoading
+    || state.phase === "idle"
+    || audio._preparedKey !== firstPreparedKey
+    || audioSecondary._preparedKey !== secondPreparedKey;
+  let firstReady = audio.readyState >= 3 && !audio.seeking;
+  let secondReady = audioSecondary.readyState >= 3 && !audioSecondary.seeking;
+  if (needsSegmentPreparation) {
+    firstReady = prepareLocalAudioAt(audio, desiredUrl, firstTiming.seconds, firstPreparedKey);
+    secondReady = prepareLocalAudioAt(audioSecondary, desiredUrl, secondTiming.seconds, secondPreparedKey);
+  }
+  const invalidStart = localAudioTooShort(audio, firstTiming.seconds) || localAudioTooShort(audioSecondary, secondTiming.seconds);
+
+  if (invalidStart) {
+    const invalidTime = localAudioTooShort(audioSecondary, secondTiming.seconds) ? secondTiming.seconds : firstTiming.seconds;
     if (soloLoading) {
-      reportMediaError(track, "Plik audio jest krotszy niz ustawiony start " + formatSeconds(desiredTime) + ".");
+      reportMediaError(track, "Plik audio jest krotszy niz ustawiony start " + formatSeconds(invalidTime) + ".");
       return;
     }
     if (Date.now() - lastAudioErrorAt > 2500) {
       lastAudioErrorAt = Date.now();
-      showToast("Ten plik audio jest krotszy niz ustawiony start " + formatSeconds(desiredTime) + ".");
-    }
-  }
-
-  if (force || drift > 0.35 || lastMediaKey !== mediaKey || lastMediaSegment !== timing.segment) {
-    try {
-      audio.currentTime = desiredTime;
-      lastMediaKey = mediaKey;
-      lastMediaSegment = timing.segment;
-    } catch (error) {
-      if (soloLoading) startMediaLoadWatch(track);
-      return;
+      showToast("Ten plik audio jest krotszy niz ustawiony start " + formatSeconds(invalidTime) + ".");
     }
   }
 
   if (soloLoading) {
-    audio.pause();
-    if (audio.readyState >= 3 && !audio.seeking) reportMediaReady(track);
+    pauseLocalAudio();
+    if (firstReady && secondReady) reportMediaReady(track);
     return;
   }
 
+  const activeAudio = timing.segment === "second" ? audioSecondary : audio;
+  const inactiveAudio = timing.segment === "second" ? audio : audioSecondary;
+  const segmentChanged = lastMediaKey !== mediaKey || lastMediaSegment !== timing.segment;
+  const drift = Math.abs((activeAudio.currentTime || 0) - desiredTime);
+  inactiveAudio.pause();
+
+  if (!activeAudio.seeking && drift > (segmentChanged ? 0.25 : AUDIO_DRIFT_CORRECTION_SECONDS)) {
+    try {
+      activeAudio.currentTime = desiredTime;
+    } catch (error) {}
+  }
+  lastMediaKey = mediaKey;
+  lastMediaSegment = timing.segment;
+
   if (state.phase === "playing" && soundEnabled) {
-    audio.play().catch(function () {
-      if (Date.now() - lastAudioErrorAt > 2500) {
-        lastAudioErrorAt = Date.now();
-        showToast("Kliknij Wlacz dzwiek przed startem rundy.");
-      }
-    });
+    if (activeAudio.paused) {
+      activeAudio.play().catch(function () {
+        if (Date.now() - lastAudioErrorAt > 2500) {
+          lastAudioErrorAt = Date.now();
+          showToast("Kliknij Wlacz dzwiek przed startem rundy.");
+        }
+      });
+    }
   } else {
-    audio.pause();
+    pauseLocalAudio();
   }
 }
 
@@ -979,7 +985,7 @@ function youtubeReadyForTrack(track) {
 }
 
 function syncYouTube(track, force, clipElapsed) {
-  audio.pause();
+  pauseLocalAudio();
   const timing = desiredSourceTime(track, Number.isFinite(clipElapsed) ? clipElapsed : estimatedElapsed());
   const desiredTime = timing.seconds;
   const mediaKey = track.id + "|" + track.videoId;
@@ -988,7 +994,7 @@ function syncYouTube(track, force, clipElapsed) {
   try {
     if (isSoloLoadingTrack(track)) {
       startMediaLoadWatch(track);
-      if (force || lastYouTubeKey !== mediaKey || lastYouTubeSegment !== timing.segment) {
+      if (lastYouTubeKey !== mediaKey || lastYouTubeSegment !== timing.segment) {
         if (youtubePlayer.cueVideoById) youtubePlayer.cueVideoById({ videoId: track.videoId, startSeconds: desiredTime });
         else youtubePlayer.seekTo(desiredTime, true);
         lastYouTubeKey = mediaKey;
@@ -1001,7 +1007,8 @@ function syncYouTube(track, force, clipElapsed) {
 
     const currentTime = youtubePlayer.getCurrentTime ? youtubePlayer.getCurrentTime() : 0;
     const drift = Math.abs((currentTime || 0) - desiredTime);
-    if (force || drift > 0.75 || lastYouTubeKey !== mediaKey || lastYouTubeSegment !== timing.segment) {
+    const segmentChanged = lastYouTubeKey !== mediaKey || lastYouTubeSegment !== timing.segment;
+    if ((segmentChanged && drift > 0.35) || (!segmentChanged && drift > 2)) {
       youtubePlayer.seekTo(desiredTime, true);
       lastYouTubeKey = mediaKey;
       lastYouTubeSegment = timing.segment;
@@ -1049,4 +1056,3 @@ function trackResultText(result) {
 setLoginMode("solo");
 restoreSession();
 setInterval(tick, 100);
-

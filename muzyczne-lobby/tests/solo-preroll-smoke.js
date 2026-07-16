@@ -35,16 +35,18 @@ socket.addEventListener("message", function (event) {
     return;
   }
 
-  if (room.phase === "countdown") {
-    if (!countdownStartedAt) countdownStartedAt = Date.now();
-    if (!readySent && room.currentTrackId) {
+  if ((room.phase === "loading" || room.phase === "countdown") && !readySent && room.currentTrackId) {
       readySent = true;
       send({
         type: "soloAction",
         action: "mediaReady",
         key: room.currentTrackId
       });
-    }
+    return;
+  }
+
+  if (room.phase === "countdown") {
+    if (!countdownStartedAt) countdownStartedAt = Date.now();
     return;
   }
 

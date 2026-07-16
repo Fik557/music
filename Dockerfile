@@ -7,6 +7,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY server.js ./server.js
 COPY muzyczne-lobby ./muzyczne-lobby
+RUN ln -s /app/muzyczne-lobby/public /app/public \
+  && ln -s /app/muzyczne-lobby/data /app/data
 
 ENV NODE_ENV=production
 ENV PORT=8080

@@ -3235,7 +3235,7 @@ function showTrackEditPreview() {
 function latestTrackForEdit(track) {
   const trackId = track && track.id;
   if (!trackId || !state) return track || {};
-  const lists = [state.tracks || [], state.libraryTracks || []];
+  const lists = [state.libraryTracks || [], state.tracks || []];
   for (const list of lists) {
     const current = list.find(function (entry) { return entry && entry.id === trackId; });
     if (current) return current;

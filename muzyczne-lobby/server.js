@@ -558,6 +558,7 @@ function restoreTracks(tracks) {
       const aliases = cleanAliases(track.aliases || track.answerAliases || track.altTitles);
       return {
         id: rawText(track.id, 80) || id("track_"),
+        libraryTrackId: rawText(track.libraryTrackId || track.sourceLibraryTrackId, 80),
         anime: anime,
         opening: opening,
         coverUrl: coverUrl,
@@ -587,9 +588,37 @@ function restoreTracks(tracks) {
 function cloneTrackForMain(track) {
   const normalized = normalizeTrack(track || {}, null);
   if (normalized.error) return null;
+  normalized.track.libraryTrackId = rawText(track && track.id, 80);
   normalized.track.id = id("track_");
   normalized.track.result = null;
   return normalized.track;
+}
+
+function trackMatchesLibraryTrack(roundTrack, libraryTrack) {
+  if (!roundTrack || !libraryTrack) return false;
+
+  const libraryId = rawText(libraryTrack.id, 80);
+  const linkedLibraryId = rawText(roundTrack.libraryTrackId || roundTrack.sourceLibraryTrackId, 80);
+  if (libraryId && (linkedLibraryId === libraryId || rawText(roundTrack.id, 80) === libraryId)) return true;
+
+  const roundVideoId = rawText(roundTrack.videoId || detectYouTubeVideoId(roundTrack.audioUrl), 40);
+  const libraryVideoId = rawText(libraryTrack.videoId || detectYouTubeVideoId(libraryTrack.audioUrl), 40);
+  if (roundVideoId && libraryVideoId && roundVideoId === libraryVideoId) return true;
+
+  const roundAudioUrl = rawText(roundTrack.audioUrl, 700);
+  const libraryAudioUrl = rawText(libraryTrack.audioUrl, 700);
+  if (roundAudioUrl && libraryAudioUrl && roundAudioUrl === libraryAudioUrl) return true;
+
+  return soloTrackKey(roundTrack) === soloTrackKey(libraryTrack);
+}
+
+function updateMainTrackFromLibrary(roundTrack, libraryTrack, previousLibraryTrack) {
+  if (!trackMatchesLibraryTrack(roundTrack, previousLibraryTrack || libraryTrack)) return roundTrack;
+
+  const updated = normalizeTrack(libraryTrack, roundTrack);
+  if (updated.error) return roundTrack;
+  updated.track.libraryTrackId = rawText((previousLibraryTrack || libraryTrack).id, 80);
+  return updated.track;
 }
 
 function normalizeBlockedIps(blockedIps) {
@@ -2704,6 +2733,10 @@ function normalizeTrack(payload, existing) {
   return {
     track: {
       id: existing ? existing.id : id("track_"),
+      libraryTrackId: rawText(
+        firstOwnValue(["libraryTrackId", "sourceLibraryTrackId"], existing && existing.libraryTrackId),
+        80
+      ),
       anime: anime,
       opening: opening,
       coverUrl: coverUrl,
@@ -3609,10 +3642,10 @@ function updateLibraryTrackDifficulty(room, payload) {
   const track = libraryTrack(room, payload.trackId);
   if (!track) return "Nie znaleziono openingu w bibliotece.";
   if (!difficultyExists(payload.difficulty)) return "Niepoprawny poziom trudnosci.";
-  const previousKey = soloTrackKey(track);
+  const previous = Object.assign({}, track);
   track.difficulty = payload.difficulty;
-  room.tracks.forEach(function (roundTrack) {
-    if (soloTrackKey(roundTrack) === previousKey) roundTrack.difficulty = payload.difficulty;
+  room.tracks = room.tracks.map(function (roundTrack) {
+    return updateMainTrackFromLibrary(roundTrack, track, previous);
   });
   return null;
 }
@@ -3625,15 +3658,12 @@ function updateLibraryTrack(room, payload) {
   if (index < 0) return "Nie znaleziono openingu w bibliotece do edycji.";
 
   const previous = room.libraryTracks[index];
-  const previousKey = soloTrackKey(previous);
   const normalized = normalizeTrack(payload.track || {}, previous);
   if (normalized.error) return normalized.error;
 
   room.libraryTracks[index] = normalized.track;
   room.tracks = room.tracks.map(function (roundTrack) {
-    if (soloTrackKey(roundTrack) !== previousKey) return roundTrack;
-    const updated = normalizeTrack(normalized.track, roundTrack);
-    return updated.error ? roundTrack : updated.track;
+    return updateMainTrackFromLibrary(roundTrack, normalized.track, previous);
   });
   return null;
 }
@@ -4921,3 +4951,9 @@ process.once("SIGINT", function () {
 
 module.exports = server;
 module.exports.ready = serverReady;
+if (process.env.NODE_ENV === "test") {
+  module.exports.testApi = {
+    restoreTracks: restoreTracks,
+    updateLibraryTrack: updateLibraryTrack
+  };
+}

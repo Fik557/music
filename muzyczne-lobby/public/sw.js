@@ -1,4 +1,4 @@
-const CACHE_NAME = "anime-opening-quiz-v23";
+const CACHE_NAME = "anime-opening-quiz-v24";
 const STATIC_ASSETS = [
   "/",
   "/styles.css",

@@ -13,7 +13,7 @@
       <section class="login-view" id="loginView">
         <div class="brand-panel">
           <button class="player-entry" id="playerToggleButton" type="button" title="Logowanie gracza" aria-label="Logowanie gracza">G</button>
-          <button class="admin-entry" id="adminToggleButton" type="button" title="Panel administratora">â™›</button>
+          <button class="admin-entry" id="adminToggleButton" type="button" title="Panel administratora">♛</button>
           <div class="brand-copy">
             <p class="eyebrow">Anime opening quiz by: Nekosia__</p>
             <h1>Anime Opening Quiz</h1>
@@ -109,8 +109,8 @@
             </label>
             <span class="pill" id="connectionStatus">laczenie</span>
             <span class="pill"><span id="roomContextLabel">Pokoj</span> <strong id="roomCodeLabel">LOBBY</strong></span>
-            <button class="icon-button" id="copyLinkButton" type="button" title="Kopiuj link">â§‰</button>
-            <button class="icon-button" id="leaveButton" type="button" title="Wyjdz">Ă—</button>
+            <button class="icon-button" id="copyLinkButton" type="button" title="Kopiuj link">⧉</button>
+            <button class="icon-button" id="leaveButton" type="button" title="Wyjdz">×</button>
           </div>
         </header>
 
@@ -172,7 +172,7 @@
         <div class="grid" id="mainGrid">
           <aside class="solo-day-streak-card hidden" id="soloDayStreakCard" aria-live="polite">
             <div class="solo-day-streak-head">
-              <span class="solo-day-flame" aria-hidden="true">đź”Ą</span>
+              <span class="solo-day-flame" aria-hidden="true">🔥</span>
               <div>
                 <p class="eyebrow">streak dnia</p>
                 <strong id="soloDayStreakValue">0</strong>
@@ -334,50 +334,7 @@
               <h2>Openingi</h2>
               <span id="trackCount">0</span>
             </div>
-            <form class="track-form" id="trackForm">
-              <input id="trackAnimeInput" placeholder="Anime" aria-label="Anime" />
-              <input id="trackOpeningInput" placeholder="Opening" aria-label="Opening" />
-              <select id="trackDifficultyInput" title="Poziom trudnosci">
-                <option value="very_easy">Very easy</option>
-                <option value="easy">Easy</option>
-                <option value="medium" selected>Medium</option>
-                <option value="hard">Hard</option>
-                <option value="impossible">Impossible</option>
-              </select>
-              <input id="trackUrlInput" placeholder="Link" aria-label="Link audio albo YouTube" required />
-              <input id="trackStartFirstInput" type="number" min="0" step="0.1" value="0" title="Start fragmentu 0-5 s" aria-label="Start 0-5 s" />
-              <input id="trackStartSecondInput" type="number" min="0" step="0.1" value="5" title="Start fragmentu 5-15 s" aria-label="Start 5-15 s" />
-              <select class="track-local-audio-select" id="localAudioSelect" title="Lokalne audio">
-                <option value="">Lokalne audio</option>
-              </select>
-              <select class="track-fallback-audio-select" id="fallbackAudioSelect" title="Awaryjne lokalne audio">
-                <option value="">Awaryjne audio</option>
-              </select>
-              <input class="audio-upload-input" id="audioUploadInput" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/mp4,.mp3,.wav,.ogg,.m4a" aria-label="Wgraj lokalny plik audio" />
-              <button class="ghost audio-upload-button" id="audioUploadButton" type="button">Wgraj</button>
-              <span class="audio-upload-status muted" id="audioUploadStatus"></span>
-              <input class="track-cover-input" id="trackCoverInput" placeholder="Link okladki" aria-label="Link okladki anime" />
-              <textarea class="track-description-input" id="trackDescriptionInput" placeholder="Krotki opis anime" aria-label="Krotki opis anime" rows="2"></textarea>
-              <textarea class="track-aliases-input" id="trackAliasesInput" placeholder="Aliasy odpowiedzi" aria-label="Aliasy odpowiedzi" rows="2"></textarea>
-              <div class="track-edit-preview hidden" id="trackEditPreview">
-                <div class="track-preview-head">
-                  <strong>Podglad piosenki</strong>
-                  <span class="muted" id="trackPreviewStatus">Wybierz fragment</span>
-                </div>
-                <div class="track-preview-controls">
-                  <button class="ghost" id="trackPreviewFirstButton" type="button" title="Odtworz pierwszy fragment"><span>&#9654;</span> Fragment 1</button>
-                  <button class="ghost" id="trackPreviewSecondButton" type="button" title="Odtworz drugi fragment"><span>&#9654;</span> Fragment 2</button>
-                  <button class="ghost icon-only" id="trackPreviewStopButton" type="button" title="Zatrzymaj podglad" aria-label="Zatrzymaj podglad"><span>&#9632;</span></button>
-                </div>
-                <div class="track-preview-media" id="trackPreviewMedia">
-                  <p class="muted">Podglad pojawi sie podczas edycji.</p>
-                </div>
-              </div>
-              <button class="primary" id="trackSubmitButton" type="submit">Dodaj</button>
-              <button class="ghost hidden" id="cancelEditButton" type="button">Anuluj</button>
-              <button class="ghost hidden" id="retryTrackSaveButton" type="button">Powtorz zmiany</button>
-              <span class="track-save-status muted" id="trackSaveStatus" aria-live="polite"></span>
-            </form>
+            <p class="muted admin-section-lead">Lista openingow wybranych do rund w pokojach. Dane utworow edytujesz w bibliotece.</p>
             <div class="track-list" id="trackList"></div>
           </div>
 
@@ -417,6 +374,50 @@
               <h2>Biblioteka openingow</h2>
               <span id="libraryCount">0</span>
             </div>
+            <form class="track-form" id="trackForm">
+              <input id="trackAnimeInput" placeholder="Anime" aria-label="Anime" />
+              <input id="trackOpeningInput" placeholder="Opening" aria-label="Opening" />
+              <select id="trackDifficultyInput" title="Poziom trudnosci">
+                <option value="very_easy">Very easy</option>
+                <option value="easy">Easy</option>
+                <option value="medium" selected>Medium</option>
+                <option value="hard">Hard</option>
+                <option value="impossible">Impossible</option>
+              </select>
+              <input id="trackUrlInput" placeholder="Link" aria-label="Link audio albo YouTube" required />
+              <input id="trackStartFirstInput" type="number" min="0" step="0.1" value="0" title="Start fragmentu 0-5 s" aria-label="Start 0-5 s" />
+              <input id="trackStartSecondInput" type="number" min="0" step="0.1" value="5" title="Start fragmentu 5-15 s" aria-label="Start 5-15 s" />
+              <select class="track-local-audio-select" id="localAudioSelect" title="Lokalne audio">
+                <option value="">Lokalne audio</option>
+              </select>
+              <select class="track-fallback-audio-select" id="fallbackAudioSelect" title="Awaryjne lokalne audio">
+                <option value="">Awaryjne audio</option>
+              </select>
+              <input class="audio-upload-input" id="audioUploadInput" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/mp4,.mp3,.wav,.ogg,.m4a" aria-label="Wgraj lokalny plik audio" />
+              <button class="ghost audio-upload-button" id="audioUploadButton" type="button">Wgraj</button>
+              <span class="audio-upload-status muted" id="audioUploadStatus"></span>
+              <input class="track-cover-input" id="trackCoverInput" placeholder="Link okladki" aria-label="Link okladki anime" />
+              <textarea class="track-description-input" id="trackDescriptionInput" placeholder="Krotki opis anime" aria-label="Krotki opis anime" rows="2"></textarea>
+              <textarea class="track-aliases-input" id="trackAliasesInput" placeholder="Aliasy odpowiedzi" aria-label="Aliasy odpowiedzi" rows="2"></textarea>
+              <div class="track-edit-preview hidden" id="trackEditPreview">
+                <div class="track-preview-head">
+                  <strong>Podglad piosenki</strong>
+                  <span class="muted" id="trackPreviewStatus">Wybierz fragment</span>
+                </div>
+                <div class="track-preview-controls">
+                  <button class="ghost" id="trackPreviewFirstButton" type="button" title="Odtworz pierwszy fragment"><span>&#9654;</span> Fragment 1</button>
+                  <button class="ghost" id="trackPreviewSecondButton" type="button" title="Odtworz drugi fragment"><span>&#9654;</span> Fragment 2</button>
+                  <button class="ghost icon-only" id="trackPreviewStopButton" type="button" title="Zatrzymaj podglad" aria-label="Zatrzymaj podglad"><span>&#9632;</span></button>
+                </div>
+                <div class="track-preview-media" id="trackPreviewMedia">
+                  <p class="muted">Podglad pojawi sie podczas edycji.</p>
+                </div>
+              </div>
+              <button class="primary" id="trackSubmitButton" type="submit">Dodaj do biblioteki</button>
+              <button class="ghost hidden" id="cancelEditButton" type="button">Anuluj</button>
+              <button class="ghost hidden" id="retryTrackSaveButton" type="button">Powtorz zmiany</button>
+              <span class="track-save-status muted" id="trackSaveStatus" aria-live="polite"></span>
+            </form>
             <div class="library-toolbar" aria-label="Filtrowanie biblioteki">
               <input id="librarySearchInput" placeholder="Szukaj anime, openingu albo linku" aria-label="Szukaj w bibliotece" />
               <select id="libraryDifficultyFilter" aria-label="Filtr poziomu trudnosci">
@@ -573,6 +574,6 @@
     <audio id="songAudioSecondary" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></audio>
     <div class="youtube-stage" id="youtubePlayer" aria-hidden="true"></div>
     <div class="toast hidden" id="toast"></div>
-    <script src="/app.js?v=20"></script>
+    <script src="/app.js?v=21"></script>
   </body>
 </html>
